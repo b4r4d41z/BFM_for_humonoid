@@ -1,0 +1,40 @@
+BFM_for_humonoid/
+├── assets/                     # ресурсы проекта (схемы, картинки, датасеты)
+│
+├── docker/                     # Dockerfile и run-скрипты
+│
+├── env/                        # conda / venv / environment files
+│
+├── bfm/                        # ядро BFM-фреймворка
+│   ├── __init__.py
+│   │
+│   ├── models/                 # нейросетевые модули
+│   │   ├── __init__.py
+│   │   ├── backward.py         # Backward Encoder B(s)
+│   │   ├── forward.py          # Forward Encoder F(s, a, z)
+│   │   ├── actor.py            # Policy π(a | s, z)
+│   │   └── critic.py           # Critic Q(s, a, z) (опционально, FB-CPR)
+│   │
+│   ├── buffers/                # буферы данных
+│   │   ├── __init__.py
+│   │   └── replay_buffer.py    # Replay Buffer
+│   │
+│   ├── training/               # обучение и лоссы
+│   │   ├── __init__.py
+│   │   ├── fb_trainer.py       # основной training loop
+│   │   ├── cpr_trainer.py      # расширение для FB-CPR (позже)
+│   │   └── losses.py           # FB TD-loss, actor loss и др.
+│   │
+│   ├── utils/                  # вспомогательные утилиты
+│   │   ├── __init__.py
+│   │   ├── config.py           # работа с конфигами
+│   │   ├── logger.py           # логирование
+│   │   └── metrics.py          # метрики и диагностика
+│   │
+│   └── vlm/                    # визуально-языковой модуль
+│       ├── __init__.py
+│       └── encoder.py          # VLM encoder (заглушка на старте)
+│
+├── main.py                     # точка входа (сборка и запуск обучения)
+│
+└── README.md                   # описание проекта
