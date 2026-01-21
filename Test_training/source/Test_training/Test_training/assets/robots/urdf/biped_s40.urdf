@@ -553,7 +553,7 @@
     <limit lower="-1.5707963267949" upper="1.5707963267949" effort="6.0" velocity="21.666" />
   </joint>
 
-  <!-- left_hand_7_part -->
+  <!-- ===================== LEFT HAND (zarm_l*)===================== -->
   <link name="zarm_l7_link">
     <inertial>
       <origin xyz="0.00267 0.00748 -0.07162" rpy="0 0 0" />
@@ -569,9 +569,9 @@
     <axis xyz="1 0 0" />
     <limit lower="-1.5707963267949" upper="1.5707963267949" effort="6.0" velocity="21.666" />
   </joint>
-  <!-- left_hand_7_part -->
+  <!-- ===================== LEFT HAND (zarm_l*)===================== -->
 
-  <!-- left_end_effector -->
+  <!-- ===================== LEFT HAND END EFFECTOR===================== -->
   <link name="zarm_l7_end_effector">
     <inertial>
       <origin xyz="0 0 0" rpy="0 0 0" />
@@ -666,7 +666,7 @@
     <limit lower="-0.78539816339" upper="0.0" effort="5.0" velocity="1.0" />
     <mimic joint="zarm_l_finger_left_joint" multiplier="-1" offset="0" />
   </joint>
-  <!-- left_end_effector -->
+  <!-- ===================== LEFT HAND END EFFECTOR===================== -->
 
   <link name="zarm_r1_link">
     <inertial>
@@ -768,7 +768,6 @@
     <axis xyz="0 0 1" />
     <limit lower="-1.5707963267949" upper="1.5707963267949" effort="6.0" velocity="21.666" />
   </joint>
-  <!-- right_hand_6_part -->
   <link name="zarm_r6_link">
     <inertial>
       <origin xyz="0.00253 -0.00382 -0.05356" rpy="0 0 0" />
@@ -776,7 +775,6 @@
       <inertia ixx="0.00023" ixy="0.0" ixz="0.0" iyy="0.00024" iyz="4e-05" izz="0.00019" />
     </inertial>
 
-    <!-- прямоугольная призма вместо mesh, как у левой руки -->
     <visual>
       <origin xyz="0 0 -0.06" rpy="0 0 0" />
       <geometry>
@@ -793,16 +791,14 @@
   </link>
 
   <joint name="zarm_r6_joint" type="revolute">
-    <!-- смещение такое же, как у zarm_l6_joint -->
     <origin xyz="0 0 -0.12" rpy="0 0 0" />
     <parent link="zarm_r5_link" />
     <child link="zarm_r6_link" />
     <axis xyz="0 1 0" />
     <limit lower="-1.5707963267949" upper="1.5707963267949" effort="6.0" velocity="21.666" />
   </joint>
-  <!-- right_hand_6_part -->
 
-  <!-- right_hand_7_part -->
+  <!-- ===================== RIGHT HAND (zarm_r*)===================== -->
   <link name="zarm_r7_link">
     <inertial>
       <origin xyz="0.00267 -0.00748 -0.07162" rpy="0 0 0" />
@@ -818,9 +814,9 @@
     <axis xyz="1 0 0" />
     <limit lower="-1.5707963267949" upper="1.5707963267949" effort="6.0" velocity="21.666" />
   </joint>
-  <!-- right_hand_7_part -->
+  <!-- ===================== RIGHT HAND (zarm_r*)===================== -->
 
-  <!-- right_end_effector -->
+  <!-- ===================== RIGHT HAND END EFFECTOR===================== -->
   <link name="zarm_r7_end_effector">
     <inertial>
       <origin xyz="0 0 0" rpy="0 0 0" />
@@ -915,7 +911,8 @@
     <limit lower="-0.78539816339" upper="0.0" effort="5.0" velocity="1.0" />
     <mimic joint="zarm_r_finger_left_joint" multiplier="-1" offset="0" />
   </joint>
-  <!-- right_end_effector -->
+  <!-- ===================== LEFT HAND END EFFECTOR===================== -->
+  
   <link name="zhead_1_link">
     <inertial>
       <origin xyz="0.0 0.01245 -0.02982" rpy="0 0 0" />
