@@ -560,6 +560,20 @@
       <mass value="0.81" />
       <inertia ixx="0.00117" ixy="2e-05" ixz="0.0" iyy="0.00128" iyz="-2e-05" izz="0.00036" />
     </inertial>
+
+    <visual>
+      <origin xyz="0 0 -0.03" rpy="0 0 0" />
+      <geometry>
+        <box size="0.03 0.03 0.06" />
+      </geometry>
+    </visual>
+
+    <collision>
+      <origin xyz="0 0 -0.03" rpy="0 0 0" />
+      <geometry>
+        <box size="0.03 0.03 0.06" />
+      </geometry>
+    </collision>
   </link>
 
   <joint name="zarm_l7_joint" type="revolute">
@@ -629,7 +643,7 @@
     <parent link="zarm_l7_end_effector" />
     <child link="zarm_l_finger_left" />
     <axis xyz="0 0 1" />
-   <limit lower="0.0" upper="0.78539816339" effort="5.0" velocity="1.0" />
+    <limit lower="0.0" upper="0.78539816339" effort="5.0" velocity="1.0" />
   </joint>
 
   <link name="zarm_l_finger_right">
@@ -805,6 +819,20 @@
       <mass value="0.81" />
       <inertia ixx="0.00098" ixy="-1e-05" ixz="1e-05" iyy="0.00104" iyz="1e-05" izz="0.00027" />
     </inertial>
+
+    <visual>
+      <origin xyz="0 0 -0.03" rpy="0 0 0" />
+      <geometry>
+        <box size="0.03 0.03 0.06" />
+      </geometry>
+    </visual>
+
+    <collision>
+      <origin xyz="0 0 -0.03" rpy="0 0 0" />
+      <geometry>
+        <box size="0.03 0.03 0.06" />
+      </geometry>
+    </collision>
   </link>
 
   <joint name="zarm_r7_joint" type="revolute">
@@ -815,6 +843,7 @@
     <limit lower="-1.5707963267949" upper="1.5707963267949" effort="6.0" velocity="21.666" />
   </joint>
   <!-- ===================== RIGHT HAND (zarm_r*)===================== -->
+
 
   <!-- ===================== RIGHT HAND END EFFECTOR===================== -->
   <link name="zarm_r7_end_effector">
@@ -911,7 +940,9 @@
     <limit lower="-0.78539816339" upper="0.0" effort="5.0" velocity="1.0" />
     <mimic joint="zarm_r_finger_left_joint" multiplier="-1" offset="0" />
   </joint>
-  <!-- ===================== LEFT HAND END EFFECTOR===================== -->
+  <!-- ===================== RIGHT HAND END EFFECTOR===================== -->
+
+
   
   <link name="zhead_1_link">
     <inertial>
