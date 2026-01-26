@@ -49,7 +49,7 @@ class TestTrainingEnvCfg(DirectRLEnvCfg):
     _USD_PATH = _ASSET_DIR / "biped_s40.usd"
 
     robot_cfg: ArticulationCfg = ArticulationCfg(
-        prim_path="/World/envs/env_.*/Robot",
+        prim_path="/World/envs/env_0/Robot",
         spawn=UsdFileCfg(usd_path=str(_USD_PATH)),
         actuators={
             "arms": ImplicitActuatorCfg(
