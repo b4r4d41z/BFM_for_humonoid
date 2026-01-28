@@ -1,5 +1,64 @@
 <?xml version='1.0' encoding='utf-8'?>
 <robot name="my_robot_description">
+  <!-- ===================== ROBOT SUPPORT STRUCTURE ===================== -->
+
+  <!-- Base platform that rests on the ground -->
+  <link name="support_base">
+    <inertial>
+      <origin xyz="0 0 0.025" rpy="0 0 0"/>
+      <mass value="0.2"/>
+      <inertia ixx="0.0001" iyy="0.0001" izz="0.0001" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0.025" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.3 0.3 0.05"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.025" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.3 0.3 0.05"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Vertical support stick fixed on the base -->
+  <link name="support_stick">
+    <inertial>
+      <origin xyz="0 0 0.5" rpy="0 0 0"/>
+      <mass value="0.01"/>
+      <inertia ixx="1e-6" iyy="1e-6" izz="1e-6" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0.5" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.01" length="1.0"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.5" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.01" length="1.0"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Joint attaching the support stick to the base -->
+  <joint name="support_stick_joint" type="fixed">
+    <origin xyz="0 0 0.05" rpy="0 0 0"/>
+    <parent link="support_base"/>
+    <child link="support_stick"/>
+  </joint>
+
+  <!-- Fixed mount of the robot's base to the support stick -->
+  <joint name="robot_fixed_mount" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <parent link="support_stick"/>
+    <child link="base_link"/>
+  </joint>
+  <!-- ===================== END ROBOT SUPPORT STRUCTURE ===================== -->
+
   <mujoco>
     <compiler meshdir="../meshes/" balanceinertia="true" discardvisual="false" />
   </mujoco>
