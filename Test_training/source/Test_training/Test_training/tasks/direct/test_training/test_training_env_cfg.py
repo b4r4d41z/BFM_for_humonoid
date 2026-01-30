@@ -45,12 +45,20 @@ class TestTrainingEnvCfg(DirectRLEnvCfg):
     reset_noise_joint_pos = 0.05
     reset_noise_joint_vel = 0.0
 
-    _ASSET_DIR = Path(__file__).resolve().parents[3] / "assets" / "robots" / "urdf" /"biped_s40"
-    _USD_PATH = _ASSET_DIR / "biped_s40.usd"
+    # Package root: .../source/Test_training/Test_training
+    _PKG_DIR = Path(__file__).resolve().parents[3]
+    _ASSETS_DIR = _PKG_DIR / "assets"
+
+    # Static scene USD (ground + table, without robot)
+    scene_usd_path: str = str(_ASSETS_DIR / "base_scene.usd")
+
+    # Robot USD
+    _ROBOT_DIR = _ASSETS_DIR / "robots" / "urdf" / "supported_biped_s40"
+    _ROBOT_USD_PATH = _ROBOT_DIR / "supported_biped_s40.usd"
 
     robot_cfg: ArticulationCfg = ArticulationCfg(
         prim_path="/World/envs/env_0/Robot",
-        spawn=UsdFileCfg(usd_path=str(_USD_PATH)),
+        spawn=UsdFileCfg(usd_path=str(_ROBOT_USD_PATH)),
         actuators={
             "arms": ImplicitActuatorCfg(
                 joint_names_expr=[
