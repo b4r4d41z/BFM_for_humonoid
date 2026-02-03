@@ -69,3 +69,96 @@ tests/
 
 # Docker history
 .isaac-lab-docker-history
+
+# =========================
+# OS / Editor
+# =========================
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+dist/
+build/
+pip-wheel-metadata/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+coverage.xml
+htmlcov/
+.venv/
+venv/
+.env
+
+# Jupyter
+.ipynb_checkpoints/
+
+# =========================
+# Logs / Runs / Outputs (your repo)
+# =========================
+Test_training/logs/
+Test_training/outputs/
+
+# TensorBoard event files anywhere
+**/events.out.tfevents.*
+
+# Model checkpoints / artifacts
+**/*.pt
+**/*.pth
+**/*.ckpt
+**/*.onnx
+**/*.pkl
+**/*.npz
+
+# If you keep params/env dumps under logs, ignore them by folder too
+**/params/
+
+# =========================
+# Isaac / Omniverse caches
+# =========================
+**/isaacsim/logs/
+**/.nvidia-omniverse/
+**/omniverse/logs/
+**/kit/logs/
+**/cache/
+**/.cache/
+
+# Some IsaacLab runs create these (keep broad but safe)
+**/runs/
+**/wandb/
+wandb/
+
+# =========================
+# Hydra (if created outside Test_training/outputs)
+# =========================
+**/.hydra/
+**/hydra.log
+
+# =========================
+# Build / Extension generated
+# =========================
+# If you ever build the extension or create local build dirs
+**/build/
+**/dist/
+
+# =========================
+# Large data / datasets (optional)
+# =========================
+# Uncomment if you later add datasets into repo
+# data/
+# datasets/
+# *.bag
+# *.hdf5
+# *.h5
