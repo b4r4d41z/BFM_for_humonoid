@@ -86,7 +86,11 @@ class TestTrainingEnv(DirectRLEnv):
 
     def _reset_idx(self, env_ids: Sequence[int] | None):
         if env_ids is None:
-            env_ids = self.robot._ALL_INDICES
+            env_ids = torch.arange(
+                self.cfg.scene.num_envs,
+                device=self.device,
+                dtype=torch.long,
+            )
 
         super()._reset_idx(env_ids)
 

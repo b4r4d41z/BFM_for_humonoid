@@ -28,7 +28,7 @@ class TestTrainingEnvCfg(DirectRLEnvCfg):
     sim: SimulationCfg = SimulationCfg(dt=1.0 / 120.0, render_interval=decimation)
 
     scene: InteractiveSceneCfg = InteractiveSceneCfg(
-        num_envs=1,
+        #num_envs=1,
         env_spacing=4.0,
         replicate_physics=True,
     )
