@@ -27,7 +27,7 @@ class TestTrainingEnv(DirectRLEnv):
         self.joint_vel = self.robot.data.joint_vel
 
         self._joint_pos_target = torch.zeros(
-            (self.cfg.scene.num_envs, len(self._ctrl_joint_ids)),
+            (self.num_envs, len(self._ctrl_joint_ids)),
             device=self.device,
             dtype=torch.float32,
         )
@@ -77,20 +77,16 @@ class TestTrainingEnv(DirectRLEnv):
         return {"policy": obs}
 
     def _get_rewards(self) -> torch.Tensor:
-        return torch.zeros((self.cfg.scene.num_envs,), device=self.device, dtype=torch.float32)
+        return torch.zeros((self.num_envs,), device=self.device, dtype=torch.float32)
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
-        terminated = torch.zeros((self.cfg.scene.num_envs,), device=self.device, dtype=torch.bool)
+        terminated = torch.zeros((self.num_envs,), device=self.device, dtype=torch.bool)
         time_out = self.episode_length_buf >= self.max_episode_length - 1
         return terminated, time_out
 
     def _reset_idx(self, env_ids: Sequence[int] | None):
         if env_ids is None:
-            env_ids = torch.arange(
-                self.cfg.scene.num_envs,
-                device=self.device,
-                dtype=torch.long,
-            )
+            env_ids = self.robot._ALL_INDICES
 
         super()._reset_idx(env_ids)
 
