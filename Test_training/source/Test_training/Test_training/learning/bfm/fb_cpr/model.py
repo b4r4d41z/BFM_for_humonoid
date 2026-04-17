@@ -86,14 +86,65 @@ class FBCPRModel(nn.Module):
             squash_output=cfg.squash_output,
         )
 
+    def _require_nested_tensor(self, d: dict, keys: tuple[str, ...]) -> torch.Tensor:
+        cur: object = d
+        walked: list[str] = []
+        for key in keys:
+            walked.append(key)
+            if not isinstance(cur, dict):
+                path = "']['".join(walked[:-1])
+                raise KeyError(f"Expected dict at batch['{path}'], got {type(cur).__name__}")
+            if key not in cur:
+                path = "']['".join(walked)
+                raise KeyError(f"Missing required key: batch['{path}']")
+            cur = cur[key]
+
+        if not isinstance(cur, torch.Tensor):
+            path = "']['".join(keys)
+            raise TypeError(f"Expected torch.Tensor at batch['{path}'], got {type(cur).__name__}")
+        return cur
+
+    def _validate_inputs(
+        self,
+        state_full: torch.Tensor,
+        head: torch.Tensor,
+        left_wrist: torch.Tensor,
+        right_wrist: torch.Tensor,
+    ) -> None:
+        if state_full.ndim != 2:
+            raise ValueError(
+                f"obs.state.full must have shape [B, {self.cfg.state_dim}], got {tuple(state_full.shape)}"
+            )
+        if int(state_full.shape[-1]) != self.cfg.state_dim:
+            raise ValueError(
+                f"obs.state.full last dim must be {self.cfg.state_dim}, got {int(state_full.shape[-1])}"
+            )
+
+        def _check_image(name: str, x: torch.Tensor) -> None:
+            if x.ndim != 4:
+                raise ValueError(f"obs.images.{name} must be 4D ([B,H,W,C] or [B,C,H,W]), got {tuple(x.shape)}")
+            channels_ok = x.shape[-1] in (1, 3, 4) or x.shape[1] in (1, 3, 4)
+            if not channels_ok:
+                raise ValueError(
+                    f"obs.images.{name} must have channels in 1/3/4 (channel-first or channel-last), got {tuple(x.shape)}"
+                )
+            if int(x.shape[0]) != int(state_full.shape[0]):
+                raise ValueError(
+                    f"Batch size mismatch: obs.images.{name}.shape[0]={int(x.shape[0])}, "
+                    f"but obs.state.full.shape[0]={int(state_full.shape[0])}"
+                )
+
+        _check_image("head", head)
+        _check_image("left_wrist", left_wrist)
+        _check_image("right_wrist", right_wrist)
+
     def _extract_inputs(self, batch: dict) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Extract required tensors from the nested training batch dict."""
-        obs = batch["obs"]
-        state_full = obs["state"]["full"]
-        images = obs["images"]
-        head = images["head"]
-        left_wrist = images["left_wrist"]
-        right_wrist = images["right_wrist"]
+        state_full = self._require_nested_tensor(batch, ("obs", "state", "full"))
+        head = self._require_nested_tensor(batch, ("obs", "images", "head"))
+        left_wrist = self._require_nested_tensor(batch, ("obs", "images", "left_wrist"))
+        right_wrist = self._require_nested_tensor(batch, ("obs", "images", "right_wrist"))
+        self._validate_inputs(state_full, head, left_wrist, right_wrist)
         return state_full, head, left_wrist, right_wrist
 
     def forward(self, batch: dict[str, dict[str, dict[str, torch.Tensor]]]) -> torch.Tensor:

@@ -141,6 +141,14 @@ class FBCPRAgent:
 
         model_batch = self._prepare_batch_for_model(batch)
         target_action = model_batch["action"]["full"]
+        if target_action.ndim != 2:
+            raise ValueError(
+                f"action.full must have shape [B, {self.model_cfg.action_dim}], got {tuple(target_action.shape)}"
+            )
+        if int(target_action.shape[-1]) != self.model_cfg.action_dim:
+            raise ValueError(
+                f"action.full last dim must be {self.model_cfg.action_dim}, got {int(target_action.shape[-1])}"
+            )
 
         pred_action = self._model(model_batch)
         loss = self._compute_action_loss(pred_action, target_action)
