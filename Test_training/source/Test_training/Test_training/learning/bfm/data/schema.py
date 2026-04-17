@@ -16,24 +16,41 @@ IMAGE_KEYS = ("head", "left_wrist", "right_wrist")
 
 @dataclass(frozen=True)
 class HDF5Paths:
-    obs_joint_pos: str = "/obs/joint_pos"
-    obs_hand_pos: str = "/obs/hand_pos"
-    obs_state: str = "/obs/state"
+    """
+    Canonical raw HDF5 dataset paths.
 
+    Important:
+    - These are raw dataset paths inside the .h5 file.
+    - They do not have to match the internal Python sample keys one-to-one.
+    - Internal Python naming is frozen separately as:
+      state -> {arm, hand, full}
+      action -> {arm, hand, full}
+    """
+
+    # Main raw state paths
+    obs_state: str = "/obs/state"
     next_obs_state: str = "/next_obs/state"
 
+    # Optional compatibility raw paths
+    obs_joint_pos: str = "/obs/joint_pos"
+    obs_hand_pos: str = "/obs/hand_pos"
+
+    # Raw action paths
     act_joint_target: str = "/act/joint_target"
     act_hand_target: str = "/act/hand_target"
     act_action: str = "/act/action"
 
+    # Vision paths
     images_head: str = "/images/head"
     images_left_wrist: str = "/images/left_wrist"
     images_right_wrist: str = "/images/right_wrist"
 
+    # Transition paths
     done: str = "/done"
     reward: str = "/reward"
     timestamps: str = "/timestamps"
 
+    # Meta paths
     meta_instruction: str = "/meta/instruction"
     meta_bag_name: str = "/meta/bag_name"
     meta_joint_names: str = "/meta/joint_names"
@@ -45,36 +62,87 @@ class HDF5Paths:
 PATHS = HDF5Paths()
 
 
+def _infer_last_dim(x: Any) -> int:
+    """
+    Return the size of the last dimension for vector-like objects.
+
+    Supports:
+    - torch.Tensor
+    - numpy.ndarray
+    - python lists
+    - other objects exposing .shape or __len__
+    """
+    if hasattr(x, "shape"):
+        shape = tuple(x.shape)
+        if len(shape) == 0:
+            raise ValueError("Input is scalar, expected vector-like object")
+        return int(shape[-1])
+
+    if hasattr(x, "__len__"):
+        return len(x)
+
+    raise TypeError(f"Cannot infer vector dimension from type: {type(x).__name__}")
+
+
+def _slice_last_dim(x: Any, start: int, end: int) -> Any:
+    """
+    Slice along the last dimension.
+
+    Works for:
+    - [D]
+    - [B, D]
+    - [..., D]
+    """
+    try:
+        return x[..., start:end]
+    except Exception as e:
+        raise TypeError(
+            f"Object of type {type(x).__name__} does not support last-dim slicing"
+        ) from e
+
+
 def split_state_vector(x: Any) -> dict[str, Any]:
     """
-    devide the 26-dim state vector into arm + hand + full.
-    expected order
-    [0:14]  -> arm joints
-    [14:26] -> hand state
+    Split a 26-dim state vector into the frozen internal representation:
+
+    - arm  -> [0:14]
+    - hand -> [14:26]
+    - full -> original input
+
+    Supports:
+    - [26]
+    - [..., 26]
     """
-    if len(x) != STATE_FULL_DIM:
-        raise ValueError(f"Expected state dim {STATE_FULL_DIM}, got {len(x)}")
+    last_dim = _infer_last_dim(x)
+    if last_dim != STATE_FULL_DIM:
+        raise ValueError(f"Expected state dim {STATE_FULL_DIM}, got {last_dim}")
 
     return {
-        "arm_joints": x[:STATE_ARM_DIM],
-        "hand_state": x[STATE_ARM_DIM:STATE_FULL_DIM],
+        "arm": _slice_last_dim(x, 0, STATE_ARM_DIM),
+        "hand": _slice_last_dim(x, STATE_ARM_DIM, STATE_FULL_DIM),
         "full": x,
     }
 
 
 def split_action_vector(x: Any) -> dict[str, Any]:
     """
-    devide the 26-dim action vector into arm + hand + full.
-    expected order
-    [0:14]  -> arm joint target
-    [14:26] -> hand target
+    Split a 26-dim action vector into the frozen internal representation:
+
+    - arm  -> [0:14]
+    - hand -> [14:26]
+    - full -> original input
+
+    Supports:
+    - [26]
+    - [..., 26]
     """
-    if len(x) != ACTION_FULL_DIM:
-        raise ValueError(f"Expected action dim {ACTION_FULL_DIM}, got {len(x)}")
+    last_dim = _infer_last_dim(x)
+    if last_dim != ACTION_FULL_DIM:
+        raise ValueError(f"Expected action dim {ACTION_FULL_DIM}, got {last_dim}")
 
     return {
-        "joint_target": x[:ACTION_ARM_DIM],
-        "hand_target": x[ACTION_ARM_DIM:ACTION_FULL_DIM],
+        "arm": _slice_last_dim(x, 0, ACTION_ARM_DIM),
+        "hand": _slice_last_dim(x, ACTION_ARM_DIM, ACTION_FULL_DIM),
         "full": x,
     }
 
@@ -90,46 +158,64 @@ def get_image_path(key: str) -> str:
     return image_map[key]
 
 
+def all_image_paths() -> dict[str, str]:
+    return {key: get_image_path(key) for key in IMAGE_KEYS}
+
+
 def canonical_sample_description() -> dict[str, Any]:
     """
-    Только описание схемы sample, без реальных данных.
-    Удобно для документации и отладки.
+    Canonical in-memory sample structure used everywhere in Python code.
+
+    This contract is frozen and should be used consistently by:
+    - stream_loader.py
+    - batch_assembly.py
+    - check_data.py
+    - future buffer / train code
+
+    Required core fields:
+    - obs.state.{arm, hand, full}
+    - action.{arm, hand, full}
+    - next_obs.state.{arm, hand, full}
+
+    Optional fields:
+    - obs.images
+    - reward
+    - done
+    - meta
     """
     return {
         "obs": {
             "state": {
-                "arm_joints": f"[{STATE_ARM_DIM}]",
-                "hand_state": f"[{STATE_HAND_DIM}]",
+                "arm": f"[{STATE_ARM_DIM}]",
+                "hand": f"[{STATE_HAND_DIM}]",
                 "full": f"[{STATE_FULL_DIM}]",
             },
             "images": {
-                "head": "[H, W, 3]",
-                "left_wrist": "[H, W, 3]",
-                "right_wrist": "[H, W, 3]",
+                "head": "[H, W, 3] optional",
+                "left_wrist": "[H, W, 3] optional",
+                "right_wrist": "[H, W, 3] optional",
             },
-            "text": "str",
-            "timestamp": "scalar",
         },
         "action": {
-            "joint_target": f"[{ACTION_ARM_DIM}]",
-            "hand_target": f"[{ACTION_HAND_DIM}]",
+            "arm": f"[{ACTION_ARM_DIM}]",
+            "hand": f"[{ACTION_HAND_DIM}]",
             "full": f"[{ACTION_FULL_DIM}]",
         },
         "next_obs": {
             "state": {
-                "arm_joints": f"[{STATE_ARM_DIM}]",
-                "hand_state": f"[{STATE_HAND_DIM}]",
+                "arm": f"[{STATE_ARM_DIM}]",
+                "hand": f"[{STATE_HAND_DIM}]",
                 "full": f"[{STATE_FULL_DIM}]",
             }
         },
-        "reward": "scalar",
-        "done": "bool",
+        "reward": "scalar optional",
+        "done": "bool or scalar optional",
         "meta": {
-            "bag_name": "str",
-            "joint_names": f"[{STATE_ARM_DIM}]",
-            "obs_dim": "scalar",
-            "act_dim": "scalar",
-            "state_definition": "str",
-            "source": "str",
+            "instruction": "str optional",
+            "bag_name": "str optional",
+            "joint_names": f"[{STATE_ARM_DIM}] optional",
+            "obs_dim": "scalar optional",
+            "act_dim": "scalar optional",
+            "state_definition": "str optional",
         },
     }

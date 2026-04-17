@@ -20,3 +20,15 @@ It creates the Gym environment for the given task ID and steps it with zero (or 
 python scripts/rsl_rl/train.py --task Template-Test-Training-Direct-v0 --num_envs 1 --seed 0
 ```
 
+**Tests for modificcation**
+
+>   buffers "smoke" test
+
+```bash 
+python Test_training/scripts/bfm/check_buffer.py \
+  --data "/media/lab/New Volume/hdf5/Sorting_food" \
+  --max_files 2 \
+  --batch_size 4 \
+  --seq_batch_size 2 \
+  --seq_len 8
+``` 
