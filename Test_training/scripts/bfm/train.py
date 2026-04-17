@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 
+
 _THIS_FILE = Path(__file__).resolve()
 _REPO_ROOT = _THIS_FILE.parents[2]
 _PY_PKG_ROOT = _REPO_ROOT / "source" / "Test_training" / "Test_training"
@@ -38,7 +39,27 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--data", type=str, required=True, help="Path to one .h5 file or directory with .h5")
     parser.add_argument("--max_files", type=int, default=8)
-    parser.add_argument("--device", type=str, default="cpu")
+    parser.add_argument(
+        "--device",
+        type=str,
+        default=None,
+        help=(
+            "Legacy single-device flag. If set, overrides both --buffer_device and --model_device "
+            "(examples: cpu, cuda, cuda:0)."
+        ),
+    )
+    parser.add_argument(
+        "--buffer_device",
+        type=str,
+        default="cpu",
+        help="Device for OfflineTrajectoryBuffer storage/sampling (recommended: cpu).",
+    )
+    parser.add_argument(
+        "--model_device",
+        type=str,
+        default="cpu",
+        help="Device for model/agent updates (examples: cpu, cuda, cuda:0).",
+    )
 
     parser.add_argument("--updates", type=int, default=10_000, help="Number of optimizer update steps")
     parser.add_argument("--batch_size", type=int, default=256)
@@ -57,6 +78,18 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_parser().parse_args()
 
+    if args.device is not None:
+        buffer_device = args.device
+        model_device = args.device
+    else:
+        buffer_device = args.buffer_device
+        model_device = args.model_device
+
+    if str(model_device).startswith("cuda") and not torch.cuda.is_available():
+        raise RuntimeError(
+            f"Requested model_device='{model_device}', but torch.cuda.is_available() is False."
+        )
+
     data_path = Path(args.data).expanduser().resolve()
     h5_files = collect_h5_files(data_path, max_files=args.max_files)
 
@@ -68,7 +101,7 @@ def main() -> None:
         hdf5_paths=h5_files,
         use_images=True,
         use_text=True,
-        device=args.device,
+        device=buffer_device,
         seed=42,
     )
 
@@ -79,7 +112,7 @@ def main() -> None:
         batch_size=args.batch_size,
         action_loss=args.action_loss,
     )
-    agent_cfg = AgentConfig(device=args.device, train=train_cfg)
+    agent_cfg = AgentConfig(device=model_device, train=train_cfg)
 
     model_cfg = ModelConfig(
         state_dim=26,
@@ -88,17 +121,18 @@ def main() -> None:
     agent = FBCPRAgent(model_cfg=model_cfg, agent_cfg=agent_cfg)
 
     print("[BFM offline train] start updates")
+    print(f"[BFM offline train] buffer_device={buffer_device} model_device={model_device}")
     for step in range(1, int(args.updates) + 1):
         if args.seq_len > 1:
             batch = buffer.sample_sequences(
                 batch_size=args.batch_size,
                 seq_len=args.seq_len,
-                device=args.device,
+                device=buffer_device,
             )
         else:
             batch = buffer.sample_transitions(
                 batch_size=args.batch_size,
-                device=args.device,
+                device=buffer_device,
             )
 
         metrics = agent.update(batch)
