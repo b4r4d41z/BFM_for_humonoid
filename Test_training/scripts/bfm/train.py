@@ -1,107 +1,120 @@
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
-from typing import Any
-
-import torch
-
-_THIS_DIR = Path(__file__).resolve().parent
-_TEST_TRAINING_DIR = _THIS_DIR.parent.parent
-_PY_PKG_ROOT = _TEST_TRAINING_DIR / "source" / "Test_training"
-sys.path.insert(0, str(_PY_PKG_ROOT))
-
-from Test_training.learning.bfm.wrappers.isaaclab_env import IsaacLabEnvWrapper  # noqa: E402
-from Test_training.learning.bfm.buffers.buffers import ReplayBuffer  # noqa: E402
-from Test_training.learning.bfm.fb_cpr.agent import FBCPRAgent, AgentConfig  # noqa: E402
-from Test_training.learning.bfm.fb_cpr.model import ModelConfig  # noqa: E402
-
-from .cli_args import build_parser  # noqa: E402
 
 
-def make_env(args) -> Any:
-    import gymnasium as gym
-    try:
-        from omni.isaac.lab_tasks.utils import parse_env_cfg  # type: ignore
-    except Exception:
-        from omni.isaac.lab_tasks.utils.parse_cfg import parse_env_cfg  # type: ignore
+_THIS_FILE = Path(__file__).resolve()
+_REPO_ROOT = _THIS_FILE.parents[2]
+_PY_PKG_ROOT = _REPO_ROOT / "source" / "Test_training" / "Test_training"
 
-    env_cfg = parse_env_cfg(args.task, num_envs=args.num_envs)
-    env = gym.make(args.task, cfg=env_cfg)
-    return env
+if str(_PY_PKG_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PY_PKG_ROOT))
+
+from learning.bfm.buffers.buffers import OfflineTrajectoryBuffer
+from learning.bfm.fb_cpr.agent import AgentConfig, FBCPRAgent, TrainConfig
+from learning.bfm.fb_cpr.model import ModelConfig
+
+
+def collect_h5_files(path: Path, max_files: int) -> list[Path]:
+    if path.is_file():
+        if path.suffix != ".h5":
+            raise ValueError(f"Expected .h5 file, got: {path}")
+        return [path]
+
+    if not path.exists():
+        raise FileNotFoundError(f"Path does not exist: {path}")
+
+    files = sorted(path.glob("*.h5"))
+    if len(files) == 0:
+        raise FileNotFoundError(f"No .h5 files found in: {path}")
+
+    return files[:max_files]
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser("BFM offline BC trainer")
+
+    parser.add_argument("--data", type=str, required=True, help="Path to one .h5 file or directory with .h5")
+    parser.add_argument("--max_files", type=int, default=8)
+    parser.add_argument("--device", type=str, default="cpu")
+
+    parser.add_argument("--updates", type=int, default=10_000, help="Number of optimizer update steps")
+    parser.add_argument("--batch_size", type=int, default=256)
+    parser.add_argument("--seq_len", type=int, default=1, help="If >1, sample sequence batches [B,T,...]")
+
+    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--weight_decay", type=float, default=0.0)
+    parser.add_argument("--grad_clip_norm", type=float, default=0.0)
+    parser.add_argument("--action_loss", type=str, default="mse", choices=["mse", "smooth_l1"])
+
+    parser.add_argument("--print_every", type=int, default=100)
+    parser.add_argument("--save_path", type=str, default="bfm_offline_bc.pt")
+    return parser
 
 
 def main() -> None:
-    parser = build_parser()
-    # extra train args
-    parser.add_argument("--buffer_size", type=int, default=100_000)
-    parser.add_argument("--batch_size", type=int, default=1024)
-    parser.add_argument("--update_every", type=int, default=2000)
-    parser.add_argument("--save_path", type=str, default="bfm_ckpt.pt")
-    args = parser.parse_args()
+    args = build_parser().parse_args()
 
-    simulation_app = None
-    try:
-        from omni.isaac.lab.app import AppLauncher  # type: ignore
+    data_path = Path(args.data).expanduser().resolve()
+    h5_files = collect_h5_files(data_path, max_files=args.max_files)
 
-        app_launcher = AppLauncher(args)
-        simulation_app = app_launcher.app
-    except Exception:
-        pass
+    print("[BFM offline train] selected H5 files:")
+    for i, p in enumerate(h5_files):
+        print(f"  [{i}] {p}")
 
-    env_raw = make_env(args)
-    env = IsaacLabEnvWrapper(env_raw, obs_key=args.obs_key, flatten_dict=True)
-
-    obs, _ = env.reset(seed=args.seed)
-    obs_dim = obs.shape[1]
-
-    if not hasattr(env_raw, "action_space"):
-        raise RuntimeError("Env has no action_space; cannot infer act_dim.")
-    act_dim = int(env_raw.action_space.shape[0])
-
-    model_cfg = ModelConfig(obs_dim=obs_dim, act_dim=act_dim)
-    agent_cfg = AgentConfig(device=args.device)
-    agent = FBCPRAgent(model_cfg, agent_cfg)
-    if args.checkpoint:
-        agent.load(args.checkpoint)
-
-    buffer = ReplayBuffer(
-        capacity=int(args.buffer_size),
-        device=torch.device(args.device),
-        obs_dim=obs_dim,
-        act_dim=act_dim,
+    buffer = OfflineTrajectoryBuffer.from_hdf5_files(
+        hdf5_paths=h5_files,
+        use_images=True,
+        use_text=True,
+        device=args.device,
+        seed=42,
     )
 
-    total_rew = 0.0
-    for t in range(1, int(args.steps) + 1):
-        act = agent.act(obs, deterministic=False).to(env.device)
-        out = env.step(act)
+    train_cfg = TrainConfig(
+        lr=args.lr,
+        weight_decay=args.weight_decay,
+        grad_clip_norm=args.grad_clip_norm,
+        batch_size=args.batch_size,
+        action_loss=args.action_loss,
+    )
+    agent_cfg = AgentConfig(device=args.device, train=train_cfg)
 
-        # store on agent device
-        buffer.add(
-            obs=obs.to(agent.device),
-            act=act.to(agent.device),
-            rew=out.reward.to(agent.device),
-            done=out.done.to(agent.device),
-            next_obs=out.obs.to(agent.device),
-        )
+    model_cfg = ModelConfig(
+        state_dim=26,
+        action_dim=26,
+    )
+    agent = FBCPRAgent(model_cfg=model_cfg, agent_cfg=agent_cfg)
 
-        obs = out.obs
-        total_rew += float(out.reward.mean().item())
+    print("[BFM offline train] start updates")
+    for step in range(1, int(args.updates) + 1):
+        if args.seq_len > 1:
+            batch = buffer.sample_sequences(
+                batch_size=args.batch_size,
+                seq_len=args.seq_len,
+                device=args.device,
+            )
+        else:
+            batch = buffer.sample_transitions(
+                batch_size=args.batch_size,
+                device=args.device,
+            )
 
-        if t % int(args.print_every) == 0:
-            avg_rew = total_rew / float(t)
-            print(f"[BFM train] step={t} avg_reward={avg_rew:.4f} buffer_size={len(buffer)}")
+        metrics = agent.update(batch)
 
-        if len(buffer) >= int(args.batch_size) and (t % int(args.update_every) == 0):
-            batch = buffer.sample(int(args.batch_size))
-            stats = agent.update(batch)
-            print(f"[BFM train] update at step={t} stats={stats}")
+        if step % int(args.print_every) == 0 or step == 1:
+            print(
+                f"[BFM offline train] step={step} "
+                f"loss={metrics['loss']:.6f} "
+                f"action_mae={metrics['action_mae']:.6f} "
+                f"grad_norm={metrics['grad_norm']:.6f}"
+            )
 
-    agent.save(args.save_path)
-    env.close()
-    if simulation_app is not None:
-        simulation_app.close()
+    save_path = Path(args.save_path).expanduser().resolve()
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    agent.save(str(save_path))
+    print(f"[BFM offline train] saved checkpoint: {save_path}")
 
 
 if __name__ == "__main__":
