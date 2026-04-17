@@ -306,8 +306,9 @@ class SimpleVisionEncoder(nn.Module):
     but it is convenient to already have it in model_blocks.py.
     """
 
-    def __init__(self, in_channels: int = 3, cfg: VisionEncoderConfig = VisionEncoderConfig()) -> None:
+    def __init__(self, in_channels: int = 3, cfg: VisionEncoderConfig | None = None) -> None:
         super().__init__()
+        cfg = cfg or VisionEncoderConfig()
 
         c1, c2, c3 = cfg.channels
 
@@ -356,10 +357,12 @@ class MultiViewVisionEncoder(nn.Module):
         self,
         view_encoder_out_dim: int = 128,
         fused_out_dim: int = 256,
-        view_cfg: VisionEncoderConfig = VisionEncoderConfig(),
-        fusion_cfg: MLPConfig = MLPConfig(hidden_dim=256, hidden_layers=2),
+        view_cfg: VisionEncoderConfig | None = None,
+        fusion_cfg: MLPConfig | None = None,
     ) -> None:
         super().__init__()
+        view_cfg = view_cfg or VisionEncoderConfig()
+        fusion_cfg = fusion_cfg or MLPConfig(hidden_dim=256, hidden_layers=2)
 
         internal_view_cfg = VisionEncoderConfig(
             out_dim=view_encoder_out_dim,
