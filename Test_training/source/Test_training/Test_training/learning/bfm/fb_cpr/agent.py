@@ -66,6 +66,10 @@ class FBCPRAgent:
     def model(self) -> FBCPRModel:
         return self._model
 
+    @property
+    def learning_rate(self) -> float:
+        return float(self._optimizer.param_groups[0]["lr"])
+
     def train(self, mode: bool = True) -> None:
         self._model.train(mode)
 
