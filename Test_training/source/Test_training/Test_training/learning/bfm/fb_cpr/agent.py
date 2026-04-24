@@ -188,21 +188,28 @@ class FBCPRAgent:
         batch = self._to_device(batch)
         return self._model.act(batch)
 
-    def save(self, path: str) -> None:
+    def save(self, path: str, extra: dict[str, Any] | None = None) -> None:
         payload = {
             "model_state": self._model.state_dict(),
             "optimizer_state": self._optimizer.state_dict(),
             "model_cfg": dataclasses.asdict(self.model_cfg),
             "agent_cfg": dataclasses.asdict(self.cfg),
         }
+        if extra is not None:
+            payload["extra"] = extra
         torch.save(payload, path)
 
-    def load(self, path: str) -> None:
+    def load(self, path: str) -> dict[str, Any] | None:
         ckpt = torch.load(path, map_location=self.device)
         self._model.load_state_dict(ckpt["model_state"])
 
         if "optimizer_state" in ckpt:
             self._optimizer.load_state_dict(ckpt["optimizer_state"])
+
+        extra = ckpt.get("extra", None)
+        if extra is not None and not isinstance(extra, dict):
+            return {"extra_raw": extra}
+        return extra
 
 
 # Backward-compatible aliases used by some old scripts
