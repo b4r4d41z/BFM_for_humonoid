@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-import torch
 import argparse
 import math
 import random
 import sys
+from datetime import datetime
 from pathlib import Path
+from typing import Any
 
+import torch
 
 _THIS_FILE = Path(__file__).resolve()
 _REPO_ROOT = _THIS_FILE.parents[2]
@@ -19,9 +21,6 @@ from learning.bfm.buffers.buffers import OfflineTrajectoryBuffer
 from learning.bfm.fb_cpr.agent import AgentConfig, FBCPRAgent, TrainConfig
 from learning.bfm.fb_cpr.model import ModelConfig
 
-from learning.bfm.buffers.buffers import OfflineTrajectoryBuffer
-from learning.bfm.fb_cpr.agent import AgentConfig, FBCPRAgent, TrainConfig
-from learning.bfm.fb_cpr.model import ModelConfig
 
 def collect_h5_files(path: Path, max_files: int) -> list[Path]:
     if path.is_file():
@@ -101,6 +100,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument("--resume_from", type=str, default=None, help="Path to checkpoint to resume from")
+    parser.add_argument(
+        "--tensorboard",
+        action="store_true",
+        help="Enable TensorBoard logging (requires tensorboard package).",
+    )
+    parser.add_argument(
+        "--tb_logdir",
+        type=str,
+        default="runs/bfm_offline",
+        help="TensorBoard log root directory.",
+    )
+    parser.add_argument(
+        "--tb_run_name",
+        type=str,
+        default=None,
+        help="TensorBoard run subdirectory name (default: auto timestamp).",
+    )
+    parser.add_argument("--tb_flush_secs", type=int, default=10, help="TensorBoard SummaryWriter flush interval")
 
     return parser
 
@@ -292,8 +309,45 @@ def checkpoint_paths(save_path: str) -> tuple[Path, Path, Path]:
     alias_path = p if p.suffix else (save_dir / "bfm_offline_bc.pt")
     return last_path, best_path, alias_path
 
-    if not path.exists():
-        raise FileNotFoundError(f"Path does not exist: {path}")
+
+def create_tensorboard_writer(args: argparse.Namespace, split_info: dict[str, Any]):
+    if not args.tensorboard:
+        return None
+    try:
+        from torch.utils.tensorboard import SummaryWriter
+    except Exception as exc:  # pragma: no cover - dependency/runtime environment specific
+        print(
+            "[BFM offline train][warn] TensorBoard requested but unavailable: "
+            f"{exc}. Install with: pip install tensorboard"
+        )
+        return None
+
+    run_name = args.tb_run_name or datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    run_dir = Path(args.tb_logdir).expanduser().resolve() / run_name
+    run_dir.mkdir(parents=True, exist_ok=True)
+    writer = SummaryWriter(log_dir=str(run_dir), flush_secs=int(args.tb_flush_secs))
+
+    hparams = {
+        "lr": float(args.lr),
+        "weight_decay": float(args.weight_decay),
+        "grad_clip_norm": float(args.grad_clip_norm),
+        "batch_size": int(args.batch_size),
+        "seq_len": int(args.seq_len),
+        "action_loss": str(args.action_loss),
+        "eval_every": int(args.eval_every),
+        "val_num_batches": int(args.val_num_batches),
+        "split_seed": int(split_info["split_seed"]),
+        "split_by": str(split_info["split_by"]),
+        "val_ratio": float(split_info["val_ratio"]),
+        "train_episodes": int(split_info["num_episodes_train"]),
+        "val_episodes": int(split_info["num_episodes_val"]),
+    }
+    for key, value in hparams.items():
+        writer.add_text(f"hparams/{key}", str(value), global_step=0)
+
+    print(f"[BFM offline train] TensorBoard logging enabled: {run_dir}")
+    return writer
+
 
 def main() -> None:
     args = build_parser().parse_args()
@@ -331,6 +385,12 @@ def main() -> None:
         f"train_eps={split_info['num_episodes_train']} val_eps={split_info['num_episodes_val']} "
         f"intersection={split_info['intersection_count']}"
     )
+    print(
+        "[BFM offline train] metric guide: "
+        "train_loss=opt objective, train_mae=|pred-target| train batch, "
+        "val_mae_full/arm/hand=validation |pred-target| (lower is better), "
+        "val_mse_full=validation squared error, grad_norm=clipped gradient norm"
+    )
 
     train_cfg = TrainConfig(
         lr=args.lr,
@@ -361,6 +421,7 @@ def main() -> None:
         )
 
     last_path, best_path, alias_path = checkpoint_paths(args.save_path)
+    tb_writer = create_tensorboard_writer(args, split_info)
 
     print("[BFM offline train] start updates")
     print(f"[BFM offline train] buffer_device={buffer_device} model_device={model_device}")
@@ -372,6 +433,11 @@ def main() -> None:
             batch = train_buffer.sample_transitions(batch_size=args.batch_size, device=buffer_device)
 
         train_metrics = agent.update(batch)
+        if tb_writer is not None:
+            tb_writer.add_scalar("train/loss", float(train_metrics["loss"]), step)
+            tb_writer.add_scalar("train/action_mae", float(train_metrics["action_mae"]), step)
+            tb_writer.add_scalar("train/grad_norm", float(train_metrics["grad_norm"]), step)
+            tb_writer.add_scalar("train/lr", float(agent.learning_rate), step)
 
         run_eval = (step == start_step) or (step % int(args.eval_every) == 0) or (step == int(args.updates))
 
@@ -386,10 +452,16 @@ def main() -> None:
             )
 
             score = float(val_metrics[args.best_metric])
+            if tb_writer is not None:
+                for metric_name, metric_value in val_metrics.items():
+                    tb_writer.add_scalar(f"val/{metric_name}", float(metric_value), step)
+                tb_writer.add_scalar("val/best_metric_current_eval", score, step)
             improved = score < best_metric
             if improved:
                 best_metric = score
                 best_step = step
+                if tb_writer is not None:
+                    tb_writer.add_scalar("val/best_metric_so_far", best_metric, step)
 
             extra = {
                 "step": step,
@@ -410,11 +482,16 @@ def main() -> None:
                 )
 
             if step % int(args.print_every) == 0 or step == start_step:
+                best_metric_fragment = (
+                    f"{args.best_metric}={score:.6f} "
+                    if args.best_metric != "val_mae_full"
+                    else ""
+                )
                 print(
                     f"[BFM offline train] step={step} "
                     f"train_loss={train_metrics['loss']:.6f} "
                     f"train_mae={train_metrics['action_mae']:.6f} "
-                    f"{args.best_metric}={score:.6f} "
+                    f"{best_metric_fragment}"
                     f"val_mae_full={val_metrics['val_mae_full']:.6f} "
                     f"val_mae_arm={val_metrics['val_mae_arm']:.6f} "
                     f"val_mae_hand={val_metrics['val_mae_hand']:.6f}"
@@ -433,6 +510,8 @@ def main() -> None:
         f"[BFM offline train] best summary: step={best_step} "
         f"{args.best_metric}={best_metric:.6f}"
     )
+    if tb_writer is not None:
+        tb_writer.close()
 
 
 if __name__ == "__main__":
