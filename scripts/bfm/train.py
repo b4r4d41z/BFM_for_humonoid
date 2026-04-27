@@ -10,16 +10,10 @@ from typing import Any
 
 import torch
 
-_THIS_FILE = Path(__file__).resolve()
-_REPO_ROOT = _THIS_FILE.parents[2]
-_PY_PKG_ROOT = _REPO_ROOT / "source" / "Test_training" / "Test_training"
 
-if str(_PY_PKG_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PY_PKG_ROOT))
-
-from learning.bfm.buffers.buffers import OfflineTrajectoryBuffer
-from learning.bfm.fb_cpr.agent import AgentConfig, FBCPRAgent, TrainConfig
-from learning.bfm.fb_cpr.model import ModelConfig
+from bfm.buffers.buffers import OfflineTrajectoryBuffer
+from bfm.fb_cpr.agent import AgentConfig, FBCPRAgent, TrainConfig
+from bfm.fb_cpr.model import ModelConfig
 
 
 def collect_h5_files(path: Path, max_files: int) -> list[Path]:
