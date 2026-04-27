@@ -81,9 +81,9 @@ def main() -> None:
     _add_extension_to_syspath()
 
     # These imports would previously crash because they trigger `Test_training/__init__.py -> tasks -> omni`
-    from Test_training.learning.bfm.wrappers.isaaclab_env import IsaacLabEnvWrapper
-    from Test_training.learning.bfm.fb_cpr.agent import FBCPRAgent, AgentConfig
-    from Test_training.learning.bfm.fb_cpr.model import ModelConfig
+    from bfm.wrappers.isaaclab_env import IsaacLabEnvWrapper
+    from bfm.fb_cpr.agent import FBCPRAgent, AgentConfig
+    from bfm.fb_cpr.model import ModelConfig
 
     # 3) Create env after runtime is up
     env_raw = make_env(args)

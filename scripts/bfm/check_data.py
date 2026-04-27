@@ -10,9 +10,10 @@ import numpy as np
 from torch.utils.data import DataLoader
 
 
-PROJECT_ROOT = Path(
-    "/home/lab/Desktop/ivan/BFM_for_humonoid/Test_training/source/Test_training/Test_training"
-)
+_THIS_FILE = Path(__file__).resolve()
+_REPO_ROOT = _THIS_FILE.parents[2]
+PROJECT_ROOT = _REPO_ROOT
+
 HDF5_DIR = Path("/media/lab/New Volume/hdf5/Sorting_food")
 REPORT_DIR = HDF5_DIR / "_check_reports"
 
@@ -24,12 +25,12 @@ RANDOM_SAMPLE_COUNT = 2
 SKIP_HIDDEN_DOTFILES = True
 
 
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.append(str(PROJECT_ROOT))
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
-from learning.bfm.data.stream_loader import HDF5DataStreamLoader
-from learning.bfm.data.batch_assembly import assemble_bfm_batch
-from learning.bfm.data.schema import (
+from bfm.data.stream_loader import HDF5DataStreamLoader
+from bfm.data.batch_assembly import assemble_bfm_batch
+from bfm.data.schema import (
     ACTION_ARM_DIM,
     ACTION_FULL_DIM,
     ACTION_HAND_DIM,

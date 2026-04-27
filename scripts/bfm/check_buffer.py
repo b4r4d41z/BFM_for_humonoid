@@ -11,21 +11,11 @@ import torch
 _THIS_FILE = Path(__file__).resolve()
 _REPO_ROOT = _THIS_FILE.parents[2]
 
-_PY_PKG_ROOT = _REPO_ROOT / "source" / "Test_training" / "Test_training"
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
-if str(_PY_PKG_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PY_PKG_ROOT))
+from bfm.buffers.buffers import OfflineTrajectoryBuffer
 
-from learning.bfm.buffers.buffers import OfflineTrajectoryBuffer
-
-'''
-_PY_PKG_ROOT = _REPO_ROOT / "source" / "Test_training"
-
-if str(_PY_PKG_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PY_PKG_ROOT))
-
-from Test_training.learning.bfm.buffers.buffers import OfflineTrajectoryBuffer
-'''
 
 def collect_h5_files(path: Path, max_files: int) -> list[Path]:
     if path.is_file():
@@ -201,7 +191,10 @@ def main() -> None:
         print(f"  {k}: {v}")
 
     print("\nSampling transition batch...")
-    transition_batch = buffer.sample_transitions(batch_size=args.batch_size, device="cpu")
+    transition_batch = buffer.sample_transitions(
+        batch_size=args.batch_size,
+        device="cpu",
+    )
     print_nested_shapes(transition_batch)
     assert_transition_batch(transition_batch, batch_size=args.batch_size)
     print("Transition batch check: OK")

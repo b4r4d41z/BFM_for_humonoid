@@ -1,4 +1,26 @@
+# Stating Offline training
 
+1. inside 1st terminal, launch tensorboard
+
+```bash
+cd ~/BFM_for_humonoid
+
+tensorboard --logdir runs/bfm_offline --host 0.0.0.0 --port 6006
+```
+2. inside 2nd terminal, start training
+
+```bash
+PYTHONPATH=$PWD python scripts/bfm/train.py \
+  --data "/media/lab/New Volume/hdf5/Sorting_food" \
+  --updates 5000 \
+  --batch_size 32 \
+  --model_device cuda:0 \
+  --buffer_device cpu \
+  --tensorboard \
+  --save_path checkpoints/ <name_save>
+```
+
+# Stating Isaacc_Lab env
 
 from ` /.../BFM_for_humonoid/Test_training/source/Test_training `
 
