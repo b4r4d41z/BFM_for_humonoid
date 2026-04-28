@@ -15,6 +15,22 @@ PYTHONPATH=$PWD python scripts/bc/train.py \
   --save_path checkpoints/bc/sorting_food_exp1
 ```
 
+# Testing trained policies from checkpoint 
+
+1. To start choose certain policy inside checkpoints folder:
+
+```bash
+PYTHONPATH=$PWD python scripts/bc/play_isaaclab.py \
+  --task Template-Test-Training-Direct-v0 \
+  --checkpoint checkpoints/bc/<experiment>/bc_offline.pt \
+  --num_envs 1 \
+  --device cuda:0 \
+  --model_device cuda:0 \
+  --max_steps 1000 \
+  --render \
+  --debug
+```
+
 # Stating Isaacc_Lab env
 
 from ` /.../BFM_for_humonoid/Test_training/source/Test_training `
