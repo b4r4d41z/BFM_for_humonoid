@@ -12,8 +12,8 @@ _REPO_ROOT = _THIS_FILE.parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from bfm.fb_cpr.agent import AgentConfig, FBCPRAgent, TrainConfig
-from bfm.fb_cpr.model import ModelConfig
+from bc.fb_cpr.agent import AgentConfig, FBCPRAgent, TrainConfig
+from bc.fb_cpr.model import ModelConfig
 
 
 def build_fake_batch(batch_size: int, h: int, w: int, device: str = "cpu") -> dict:

@@ -4,7 +4,7 @@ from typing import Any
 
 import torch
 
-from learning.bfm.data.schema import IMAGE_KEYS
+from learning.bc.data.schema import IMAGE_KEYS
 
 
 def _get_nested(d: dict[str, Any], keys: list[str]) -> Any:

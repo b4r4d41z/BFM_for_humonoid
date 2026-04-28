@@ -14,7 +14,7 @@ _REPO_ROOT = _THIS_FILE.parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from bfm.buffers.buffers import OfflineTrajectoryBuffer
+from bc.buffers.buffers import OfflineTrajectoryBuffer
 
 
 def collect_h5_files(path: Path, max_files: int) -> list[Path]:

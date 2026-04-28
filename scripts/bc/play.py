@@ -1,4 +1,4 @@
-# Test_training/scripts/bfm/play.py
+# Test_training/scripts/bc/play.py
 from __future__ import annotations
 
 import sys
@@ -16,7 +16,7 @@ def _add_extension_to_syspath() -> Path:
       Test_training/ (the IsaacLab extension python package)
     without requiring editable install.
     """
-    this_dir = Path(__file__).resolve().parent                 # .../Test_training/scripts/bfm
+    this_dir = Path(__file__).resolve().parent                 # .../Test_training/scripts/bc
     test_training_dir = this_dir.parent.parent                 # .../Test_training
     py_pkg_root = test_training_dir / "source" / "Test_training"  # contains Test_training/ package
     sys.path.insert(0, str(py_pkg_root))
@@ -81,9 +81,9 @@ def main() -> None:
     _add_extension_to_syspath()
 
     # These imports would previously crash because they trigger `Test_training/__init__.py -> tasks -> omni`
-    from bfm.wrappers.isaaclab_env import IsaacLabEnvWrapper
-    from bfm.fb_cpr.agent import FBCPRAgent, AgentConfig
-    from bfm.fb_cpr.model import ModelConfig
+    from bc.wrappers.isaaclab_env import IsaacLabEnvWrapper
+    from bc.fb_cpr.agent import FBCPRAgent, AgentConfig
+    from bc.fb_cpr.model import ModelConfig
 
     # 3) Create env after runtime is up
     env_raw = make_env(args)

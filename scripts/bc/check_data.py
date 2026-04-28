@@ -28,9 +28,9 @@ SKIP_HIDDEN_DOTFILES = True
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from bfm.data.stream_loader import HDF5DataStreamLoader
-from bfm.data.batch_assembly import assemble_bfm_batch
-from bfm.data.schema import (
+from bc.data.stream_loader import HDF5DataStreamLoader
+from bc.data.batch_assembly import assemble_bfm_batch
+from bc.data.schema import (
     ACTION_ARM_DIM,
     ACTION_FULL_DIM,
     ACTION_HAND_DIM,

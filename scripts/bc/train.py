@@ -11,9 +11,9 @@ from typing import Any
 import torch
 
 
-from bfm.buffers.buffers import OfflineTrajectoryBuffer
-from bfm.fb_cpr.agent import AgentConfig, FBCPRAgent, TrainConfig
-from bfm.fb_cpr.model import ModelConfig
+from bc.buffers.buffers import OfflineTrajectoryBuffer
+from bc.fb_cpr.agent import AgentConfig, FBCPRAgent, TrainConfig
+from bc.fb_cpr.model import ModelConfig
 
 
 def collect_h5_files(path: Path, max_files: int) -> list[Path]:
@@ -70,7 +70,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--action_loss", type=str, default="mse", choices=["mse", "smooth_l1"])
 
     parser.add_argument("--print_every", type=int, default=100)
-    parser.add_argument("--save_path", type=str, default="bfm_offline_bc.pt")
+    parser.add_argument("--save_path", type=str, default="bc_offline.pt")
 
     # Full offline training system pieces
     parser.add_argument("--val_ratio", type=float, default=0.2, help="Episode-level validation ratio")
@@ -102,7 +102,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--tb_logdir",
         type=str,
-        default="runs/bfm_offline",
+        default="runs/bc",
         help="TensorBoard log root directory.",
     )
     parser.add_argument(
@@ -300,7 +300,7 @@ def checkpoint_paths(save_path: str) -> tuple[Path, Path, Path]:
 
     last_path = save_dir / "last.pt"
     best_path = save_dir / "best.pt"
-    alias_path = p if p.suffix else (save_dir / "bfm_offline_bc.pt")
+    alias_path = p if p.suffix else (save_dir / "bc_offline.pt")
     return last_path, best_path, alias_path
 
 
