@@ -6,6 +6,7 @@ from typing import Any
 import torch
 
 from bc.fb_cpr.model import ModelConfig
+from bc.model_blocks import MLPConfig, VisionEncoderConfig
 from bc.nn_models import TanhDiagGaussianPolicy
 
 
@@ -81,6 +82,8 @@ class BCPolicyRunner:
         if "act_dim" in fbcpr_kwargs and "action_dim" not in fbcpr_kwargs:
             fbcpr_kwargs["action_dim"] = int(fbcpr_kwargs.pop("act_dim"))
 
+        fbcpr_kwargs = self._rehydrate_nested_model_cfg(fbcpr_kwargs)
+
         try:
             cfg = ModelConfig(**fbcpr_kwargs)
             from bc.fb_cpr.model import FBCPRModel
@@ -112,6 +115,28 @@ class BCPolicyRunner:
         )
         model.load_state_dict(state_dict, strict=False)
         return model, "mlp_policy"
+
+    def _rehydrate_nested_model_cfg(self, cfg_kwargs: dict[str, Any]) -> dict[str, Any]:
+        """
+        Rebuild nested dataclass config objects if they were serialized as dicts.
+
+        Checkpoints are saved with dataclasses.asdict(...), so nested fields like
+        state_encoder_cfg / vision_encoder_cfg arrive as plain dicts.
+        FBCPRModel expects MLPConfig/VisionEncoderConfig objects.
+        """
+        out = dict(cfg_kwargs)
+
+        mlp_cfg_keys = ("state_encoder_cfg", "vision_fusion_cfg", "fusion_cfg", "policy_head_cfg")
+        for key in mlp_cfg_keys:
+            value = out.get(key)
+            if isinstance(value, dict):
+                out[key] = MLPConfig(**value)
+
+        vision_value = out.get("vision_encoder_cfg")
+        if isinstance(vision_value, dict):
+            out["vision_encoder_cfg"] = VisionEncoderConfig(**vision_value)
+
+        return out
 
     @torch.no_grad()
     def act(self, model_obs: torch.Tensor) -> torch.Tensor:
