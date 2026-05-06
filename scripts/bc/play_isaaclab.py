@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import traceback
 from typing import Any
 
 import torch
@@ -36,6 +37,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--expected_obs_dim", type=int, default=None)
     parser.add_argument("--expected_action_dim", type=int, default=None)
+    parser.add_argument("--auto_adjust_obs_dim", action="store_true", default=True)
+    parser.add_argument("--no_auto_adjust_obs_dim", action="store_false", dest="auto_adjust_obs_dim")
 
     parser.add_argument("--obs_dim", type=int, default=None, help="Fallback model construction obs dim")
     parser.add_argument("--action_dim", type=int, default=None, help="Fallback model construction action dim")
@@ -110,6 +113,7 @@ def main() -> None:
             expected_obs_dim=args.expected_obs_dim,
             device=args.model_device,
             debug=args.debug,
+            auto_adjust_dim=args.auto_adjust_obs_dim,
         )
         act_adapter = ActionAdapter(
             expected_action_dim=args.expected_action_dim,
@@ -129,61 +133,90 @@ def main() -> None:
             hidden_layers=args.hidden_layers,
         )
 
+        expected_obs_dim = args.expected_obs_dim
+        expected_action_dim = args.expected_action_dim
+        if expected_obs_dim is None and policy_runner.expected_obs_dim:
+            expected_obs_dim = policy_runner.expected_obs_dim
+        if expected_action_dim is None and policy_runner.expected_action_dim:
+            expected_action_dim = policy_runner.expected_action_dim
+
+        # Rebuild adapters with inferred dims for stricter checks and better key selection.
+        obs_adapter = ObservationAdapter(
+            expected_obs_dim=expected_obs_dim,
+            device=args.model_device,
+            debug=args.debug,
+            auto_adjust_dim=args.auto_adjust_obs_dim,
+        )
+        act_adapter = ActionAdapter(
+            expected_action_dim=expected_action_dim,
+            env_device=args.device,
+            action_scale=args.action_scale,
+            clip_actions=args.clip_actions,
+            debug=args.debug,
+        )
+        print(f"[play_isaaclab] expected obs dim: {expected_obs_dim}")
+        print(f"[play_isaaclab] expected action dim: {expected_action_dim}")
+
         raw_obs, _ = _unwrap_reset(env.reset())
         print(f"[play_isaaclab] raw observation type: {type(raw_obs).__name__}")
 
         for step in range(int(args.max_steps)):
-            model_obs = obs_adapter(raw_obs)
-            check_shape("model_obs", model_obs, expected_last_dim=args.expected_obs_dim)
-            check_tensor_finite("model_obs", model_obs)
-            check_device("model_obs", model_obs, args.model_device)
+            try:
+                model_obs = obs_adapter(raw_obs)
+                check_shape("model_obs", model_obs, expected_last_dim=expected_obs_dim)
+                check_tensor_finite("model_obs", model_obs)
+                check_device("model_obs", model_obs, args.model_device)
 
-            model_action = policy_runner.act(model_obs)
-            check_shape("model_action", model_action, expected_last_dim=args.expected_action_dim)
-            check_tensor_finite("model_action", model_action)
-            check_device("model_action", model_action, args.model_device)
+                model_action = policy_runner.act(model_obs)
+                check_shape("model_action", model_action, expected_last_dim=expected_action_dim)
+                check_tensor_finite("model_action", model_action)
+                check_device("model_action", model_action, args.model_device)
 
-            env_action = act_adapter(model_action)
-            check_shape("env_action", env_action, expected_last_dim=args.expected_action_dim)
-            check_tensor_finite("env_action", env_action)
-            check_device("env_action", env_action, args.device)
+                env_action = act_adapter(model_action)
+                check_shape("env_action", env_action, expected_last_dim=expected_action_dim)
+                check_tensor_finite("env_action", env_action)
+                check_device("env_action", env_action, args.device)
 
-            if step == 0 or args.debug:
-                print(f"[play_isaaclab] model observation shape: {tuple(model_obs.shape)}")
-                print(f"[play_isaaclab] model action shape: {tuple(model_action.shape)}")
-                print(f"[play_isaaclab] env action shape: {tuple(env_action.shape)}")
-                if args.debug:
-                    print_debug_tensor("model_obs", model_obs)
-                    print_debug_tensor("model_action", model_action)
-                    print_debug_tensor("env_action", env_action)
+                if step == 0 or args.debug:
+                    print(f"[play_isaaclab] model observation shape: {tuple(model_obs.shape)}")
+                    print(f"[play_isaaclab] model action shape: {tuple(model_action.shape)}")
+                    print(f"[play_isaaclab] env action shape: {tuple(env_action.shape)}")
+                    if args.debug:
+                        print_debug_tensor("model_obs", model_obs)
+                        print_debug_tensor("model_action", model_action)
+                        print_debug_tensor("env_action", env_action)
 
-            raw_step = env.step(env_action)
-            raw_obs, reward, done, info = _unwrap_step(raw_step)
+                raw_step = env.step(env_action)
+                raw_obs, reward, done, info = _unwrap_step(raw_step)
 
-            if args.render and hasattr(env, "render"):
-                env.render()
+                if args.render and hasattr(env, "render"):
+                    env.render()
 
-            recorder.log_step(
-                step=step,
-                obs=model_obs,
-                model_action=model_action,
-                env_action=env_action,
-                reward=reward,
-                done=done,
-                info=info,
-            )
+                recorder.log_step(
+                    step=step,
+                    obs=model_obs,
+                    model_action=model_action,
+                    env_action=env_action,
+                    reward=reward,
+                    done=done,
+                    info=info,
+                )
 
-            done_any = False
-            if done is not None:
-                if isinstance(done, torch.Tensor):
-                    done_any = bool(done.any().item())
-                elif isinstance(done, (list, tuple)):
-                    done_any = any(bool(x) for x in done)
-                else:
-                    done_any = bool(done)
+                done_any = False
+                if done is not None:
+                    if isinstance(done, torch.Tensor):
+                        done_any = bool(done.any().item())
+                    elif isinstance(done, (list, tuple)):
+                        done_any = any(bool(x) for x in done)
+                    else:
+                        done_any = bool(done)
 
-            if done_any:
-                raw_obs, _ = _unwrap_reset(env.reset())
+                if done_any:
+                    raw_obs, _ = _unwrap_reset(env.reset())
+            except Exception as exc:
+                print(f"[play_isaaclab] ERROR at step={step}: {exc}")
+                traceback.print_exc()
+                raise
 
     finally:
         recorder.save()

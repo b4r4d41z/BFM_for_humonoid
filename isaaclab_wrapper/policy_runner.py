@@ -23,12 +23,25 @@ class BCPolicyRunner:
         state_dict, meta = self._extract_state_dict(payload)
 
         self.model, self.model_kind = self._build_model(state_dict=state_dict, meta=meta, model_kwargs=model_kwargs)
+        self.expected_obs_dim: int | None = None
+        self.expected_action_dim: int | None = None
+        if self.model_kind == "fbcpr_model":
+            self.expected_obs_dim = int(getattr(self.model.cfg, "state_dim", 0))
+            self.expected_action_dim = int(getattr(self.model.cfg, "action_dim", 0))
+        elif self.model_kind == "mlp_policy":
+            self.expected_obs_dim = int(getattr(self.model, "obs_dim", model_kwargs.get("obs_dim", 0)))
+            self.expected_action_dim = int(getattr(self.model, "action_dim", model_kwargs.get("action_dim", 0)))
+
         self.model.to(self.device)
         self.model.eval()
 
         if self.debug:
             print(f"[BCPolicyRunner] loaded checkpoint={self.checkpoint_path}")
             print(f"[BCPolicyRunner] model_kind={self.model_kind}")
+            print(
+                f"[BCPolicyRunner] expected dims: obs={self.expected_obs_dim} "
+                f"action={self.expected_action_dim}"
+            )
 
     def _extract_state_dict(self, payload: Any) -> tuple[dict[str, torch.Tensor], dict[str, Any]]:
         if isinstance(payload, dict):
