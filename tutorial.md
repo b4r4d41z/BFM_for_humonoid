@@ -26,6 +26,7 @@ python -m scripts.bc.play_isaaclab \
   --action_mode arm_only \
   --max_steps 1000 \
   --render \
+  --allow_provisional_mapping \
   --debug
 ```
 
