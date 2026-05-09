@@ -160,11 +160,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--contract_report_dir", type=str, default="runs/bc/isaaclab_contract")
 
     parser.add_argument("--debug", action="store_true")
-    parser.add_argument("--action_mode", type=str, default="arm_only", choices=("arm_only", "identity"))
+    parser.add_argument("--action_mode", type=str, default="arm_only", choices=("arm_only", "arm_plus_gripper_bridge", "identity"))
     parser.add_argument("--action_joint_source", type=str, default="checkpoint_meta", choices=("checkpoint_meta", "mapping_file"))
     parser.add_argument("--action_mapping_file", type=str, default=None, help="Path to JSON/YAML with model action joint names")
     parser.add_argument("--allow_provisional_mapping", action="store_true", help="Allow fallback [0:14] mapping when exact name match is unavailable")
     parser.add_argument("--joint_name_normalization", type=str, default="strict", choices=("strict", "strip_lower"))
+    parser.add_argument("--gripper_bridge_aggregator", type=str, default="prototype_distance", choices=("prototype_distance",))
+    parser.add_argument("--gripper_open_threshold", type=float, default=0.35, help="closure score threshold to open (<=)")
+    parser.add_argument("--gripper_close_threshold", type=float, default=0.65, help="closure score threshold to close (>=)")
+    parser.add_argument("--gripper_open_prototype", type=float, nargs=6, default=[0.0, 100.0, 0.0, 0.0, 0.0, 0.0])
+    parser.add_argument("--gripper_closed_prototype", type=float, nargs=6, default=[69.0, 99.0, 42.0, 44.0, 61.0, 60.0])
     return parser
 
 
@@ -277,6 +282,11 @@ def main() -> None:
             model_action_joint_names=normalized_model_joint_names,
             env_ctrl_joint_names=normalized_env_joint_names,
             allow_schema_fallback=args.allow_provisional_mapping,
+            gripper_bridge_aggregator=args.gripper_bridge_aggregator,
+            gripper_open_threshold=args.gripper_open_threshold,
+            gripper_close_threshold=args.gripper_close_threshold,
+            gripper_open_prototype=args.gripper_open_prototype,
+            gripper_closed_prototype=args.gripper_closed_prototype,
         )
         print(f"[play_isaaclab] expected obs dim: {expected_obs_dim}")
         print(f"[play_isaaclab] expected action dim: {expected_action_dim}")
@@ -366,6 +376,8 @@ def main() -> None:
                         print_debug_tensor("model_obs", model_obs)
                         print_debug_tensor("model_action", model_action)
                         print_debug_tensor("env_action", env_action)
+                        if args.action_mode == "arm_plus_gripper_bridge":
+                            print(f"[play_isaaclab][gripper_bridge] {act_adapter.gripper_bridge_stats}")
 
                 raw_step = env.step(env_action)
                 raw_obs, reward, done, info = _unwrap_step(raw_step)

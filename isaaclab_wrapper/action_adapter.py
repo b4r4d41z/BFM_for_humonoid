@@ -20,6 +20,11 @@ class ActionAdapter:
         model_action_joint_names: list[str] | None = None,
         env_ctrl_joint_names: list[str] | None = None,
         allow_schema_fallback: bool = True,
+        gripper_bridge_aggregator: str = "mean",
+        gripper_open_threshold: float = 0.15,
+        gripper_close_threshold: float = -0.15,
+        gripper_open_prototype: list[float] | None = None,
+        gripper_closed_prototype: list[float] | None = None,
     ):
         self.expected_action_dim = expected_action_dim
         self.env_device = torch.device(env_device)
@@ -34,12 +39,25 @@ class ActionAdapter:
         self.model_action_joint_names = list(model_action_joint_names or [])
         self.env_ctrl_joint_names = list(env_ctrl_joint_names or [])
         self.allow_schema_fallback = bool(allow_schema_fallback)
+        self.gripper_bridge_aggregator = gripper_bridge_aggregator
+        self.gripper_open_threshold = float(gripper_open_threshold)
+        self.gripper_close_threshold = float(gripper_close_threshold)
+        open_proto = gripper_open_prototype or [0.0, 100.0, 0.0, 0.0, 0.0, 0.0]
+        closed_proto = gripper_closed_prototype or [69.0, 99.0, 42.0, 44.0, 61.0, 60.0]
+        self._open_proto = torch.tensor(open_proto, dtype=torch.float32, device=self.env_device).view(1, -1)
+        self._closed_proto = torch.tensor(closed_proto, dtype=torch.float32, device=self.env_device).view(1, -1)
+        proto_range = (self._closed_proto - self._open_proto).abs()
+        self._active_dims = (proto_range > 1e-6).to(torch.float32)
+        self._active_count = torch.clamp(self._active_dims.sum(dim=-1), min=1.0)
+        self._gripper_state = torch.zeros((1, 2), dtype=torch.float32, device=self.env_device)
+        self._gripper_switches = torch.zeros((1, 2), dtype=torch.int64, device=self.env_device)
+        self._gripper_stats = {"open_ratio_left": 0.0, "open_ratio_right": 0.0, "switches_left": 0, "switches_right": 0}
         self._used_name_map = False
         self._arm_index_map = self._build_arm_index_map()
         self._map_source = "name_map" if self._used_name_map else "schema_fallback_[0:14]"
 
     def _build_arm_index_map(self) -> list[int]:
-        if self.action_mode != "arm_only":
+        if self.action_mode not in ("arm_only", "arm_plus_gripper_bridge"):
             return []
         if (
             self.model_action_joint_names
@@ -80,6 +98,10 @@ class ActionAdapter:
         if self.action_mode == "arm_only":
             idx = torch.as_tensor(self._arm_index_map, dtype=torch.long, device=action_2d.device)
             env_action = action_2d.index_select(dim=-1, index=idx)
+        elif self.action_mode == "arm_plus_gripper_bridge":
+            idx = torch.as_tensor(self._arm_index_map, dtype=torch.long, device=action_2d.device)
+            env_action = action_2d.index_select(dim=-1, index=idx)
+            self._update_gripper_bridge(action_2d)
         else:
             env_action = action_2d
 
@@ -102,3 +124,49 @@ class ActionAdapter:
                 print("[ActionAdapter][WARNING] arm mapping uses fallback [0:14]. Verify joint-order metadata.")
 
         return env_action
+
+    def _update_gripper_bridge(self, action_2d: torch.Tensor) -> None:
+        if action_2d.shape[-1] < data_schema.ACTION_FULL_DIM:
+            return
+        hand = action_2d[:, data_schema.ACTION_ARM_DIM : data_schema.ACTION_FULL_DIM]
+        left = hand[:, : data_schema.ACTION_HAND_DIM // 2]
+        right = hand[:, data_schema.ACTION_HAND_DIM // 2 :]
+        left_score = self._closure_score(left)
+        right_score = self._closure_score(right)
+        scores = torch.stack([left_score, right_score], dim=-1)
+
+        if self._gripper_state.shape[0] != scores.shape[0]:
+            self._gripper_state = torch.zeros((scores.shape[0], 2), dtype=torch.float32, device=scores.device)
+            self._gripper_switches = torch.zeros((scores.shape[0], 2), dtype=torch.int64, device=scores.device)
+
+        prev = self._gripper_state.clone()
+        open_mask = scores <= self.gripper_open_threshold
+        close_mask = scores >= self.gripper_close_threshold
+        self._gripper_state[open_mask] = 1.0
+        self._gripper_state[close_mask] = 0.0
+        switched = (prev != self._gripper_state).to(torch.int64)
+        self._gripper_switches += switched
+        self._gripper_stats = {
+            "open_ratio_left": float(self._gripper_state[:, 0].mean().item()),
+            "open_ratio_right": float(self._gripper_state[:, 1].mean().item()),
+            "switches_left": int(self._gripper_switches[:, 0].sum().item()),
+            "switches_right": int(self._gripper_switches[:, 1].sum().item()),
+            "closure_score_left": float(left_score.mean().item()),
+            "closure_score_right": float(right_score.mean().item()),
+            "left_cmd": int(self._gripper_state[:, 0].mean().item() >= 0.5),
+            "right_cmd": int(self._gripper_state[:, 1].mean().item() >= 0.5),
+            "left_hand_raw": left[0].detach().cpu().tolist(),
+            "right_hand_raw": right[0].detach().cpu().tolist(),
+        }
+
+    @property
+    def gripper_bridge_stats(self) -> dict[str, float | int]:
+        return dict(self._gripper_stats)
+
+    def _closure_score(self, hand6: torch.Tensor) -> torch.Tensor:
+        # Distance-based score calibrated by dataset prototypes:
+        # 0.0 -> closer to open prototype, 1.0 -> closer to closed prototype.
+        active = self._active_dims.to(hand6.device)
+        open_d = (((hand6 - self._open_proto.to(hand6.device)) ** 2) * active).sum(dim=-1) / self._active_count.to(hand6.device)
+        closed_d = (((hand6 - self._closed_proto.to(hand6.device)) ** 2) * active).sum(dim=-1) / self._active_count.to(hand6.device)
+        return open_d / (open_d + closed_d + 1e-6)

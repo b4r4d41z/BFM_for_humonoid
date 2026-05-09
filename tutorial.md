@@ -23,10 +23,14 @@ PYTHONPATH=$PWD python scripts/bc/train.py \
 python -m scripts.bc.play_isaaclab \
   --task Template-Test-Training-Direct-v0 \
   --checkpoint /home/lab/Desktop/ivan/BFM_for_humonoid/checkpoints/bc/best.pt \
-  --action_mode arm_only \
+  --action_mode arm_plus_gripper_bridge \
+  --allow_provisional_mapping \
+  --gripper_open_prototype 0 100 0 0 0 0 \
+  --gripper_closed_prototype 69 99 42 44 61 60 \
+  --gripper_open_threshold 0.35 \
+  --gripper_close_threshold 0.65 \
   --max_steps 1000 \
   --render \
-  --allow_provisional_mapping \
   --debug
 ```
 
