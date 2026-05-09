@@ -35,6 +35,30 @@ def _extract_checkpoint_joint_names(meta: dict[str, Any]) -> list[str]:
     return []
 
 
+def _load_joint_names_from_mapping_file(mapping_path: str) -> list[str]:
+    path = Path(mapping_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Mapping file not found: {mapping_path}")
+    text = path.read_text(encoding="utf-8")
+    if path.suffix.lower() == ".json":
+        payload = json.loads(text)
+    else:
+        try:
+            import yaml  # type: ignore
+        except Exception as exc:
+            raise RuntimeError(
+                "YAML mapping requested but PyYAML is not installed. Use JSON file or install pyyaml."
+            ) from exc
+        payload = yaml.safe_load(text)
+
+    if isinstance(payload, dict):
+        for key in ("joint_names", "model_action_joint_names", "arm_joint_names"):
+            value = payload.get(key)
+            if isinstance(value, list) and value:
+                return [str(x) for x in value]
+    raise ValueError(f"Could not find joint names list in mapping file: {mapping_path}")
+
+
 def _extract_env_joint_names(env: Any) -> list[str]:
     names: list[str] = []
     if hasattr(env, "unwrapped"):
@@ -55,6 +79,14 @@ def _compare_joint_orders(model_joint_names: list[str], env_joint_names: list[st
     if set(model_joint_names) & set(env_joint_names):
         return "partial"
     return "missing"
+
+
+def _normalize_joint_names(names: list[str], mode: str) -> list[str]:
+    if mode == "strict":
+        return names
+    if mode == "strip_lower":
+        return [str(x).strip().lower() for x in names]
+    raise ValueError(f"Unknown joint name normalization mode: {mode}")
 
 
 def _write_contract_report(report: dict[str, Any], output_dir: str) -> None:
@@ -129,6 +161,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--action_mode", type=str, default="arm_only", choices=("arm_only", "identity"))
+    parser.add_argument("--action_joint_source", type=str, default="checkpoint_meta", choices=("checkpoint_meta", "mapping_file"))
+    parser.add_argument("--action_mapping_file", type=str, default=None, help="Path to JSON/YAML with model action joint names")
+    parser.add_argument("--allow_provisional_mapping", action="store_true", help="Allow fallback [0:14] mapping when exact name match is unavailable")
+    parser.add_argument("--joint_name_normalization", type=str, default="strict", choices=("strict", "strip_lower"))
     return parser
 
 
@@ -212,7 +248,15 @@ def main() -> None:
         env_cfg = getattr(env.unwrapped if hasattr(env, "unwrapped") else env, "cfg", None)
         env_action_dim = int(getattr(env_cfg, "action_space", 0)) if env_cfg is not None else None
         env_ctrl_joint_names = _extract_env_joint_names(env)
-        checkpoint_joint_names = _extract_checkpoint_joint_names(policy_runner.checkpoint_meta)
+        if args.action_joint_source == "mapping_file":
+            if not args.action_mapping_file:
+                raise ValueError("--action_mapping_file is required when --action_joint_source=mapping_file")
+            checkpoint_joint_names = _load_joint_names_from_mapping_file(args.action_mapping_file)
+        else:
+            checkpoint_joint_names = _extract_checkpoint_joint_names(policy_runner.checkpoint_meta)
+
+        normalized_model_joint_names = _normalize_joint_names(checkpoint_joint_names, args.joint_name_normalization)
+        normalized_env_joint_names = _normalize_joint_names(env_ctrl_joint_names, args.joint_name_normalization)
 
         # Rebuild adapters with inferred dims for stricter checks and better key selection.
         obs_adapter = ObservationAdapter(
@@ -230,8 +274,9 @@ def main() -> None:
             action_mode=args.action_mode,
             model_action_dim=expected_action_dim,
             env_action_dim=env_action_dim,
-            model_action_joint_names=checkpoint_joint_names,
-            env_ctrl_joint_names=env_ctrl_joint_names,
+            model_action_joint_names=normalized_model_joint_names,
+            env_ctrl_joint_names=normalized_env_joint_names,
+            allow_schema_fallback=args.allow_provisional_mapping,
         )
         print(f"[play_isaaclab] expected obs dim: {expected_obs_dim}")
         print(f"[play_isaaclab] expected action dim: {expected_action_dim}")
@@ -240,7 +285,7 @@ def main() -> None:
         env_cfg = getattr(unwrapped_env, "cfg", None)
         env_action_space = getattr(env_cfg, "action_space", None)
         env_observation_space = getattr(env_cfg, "observation_space", None)
-        mapping_status = _compare_joint_orders(checkpoint_joint_names, env_ctrl_joint_names)
+        mapping_status = _compare_joint_orders(normalized_model_joint_names, normalized_env_joint_names)
         verification_status = "verified" if mapping_status == "exact_match" else "provisional"
         notes = (
             "Dataset schema defines split arm=[0:14], hand=[14:26]. "
@@ -260,6 +305,11 @@ def main() -> None:
         )
         if verification_status != "verified":
             print(f"[play_isaaclab][WARNING] action mapping is provisional. {notes}")
+            if not args.allow_provisional_mapping:
+                raise RuntimeError(
+                    "Mapping is not exact_match and provisional mapping is disabled. "
+                    "Provide a verified joint mapping source or pass --allow_provisional_mapping."
+                )
 
         report = {
             "generated_utc": datetime.now(timezone.utc).isoformat(),
@@ -280,6 +330,9 @@ def main() -> None:
                 "checkpoint_joint_names_status": mapping_status,
                 "mapping_status": verification_status,
                 "checkpoint_joint_names": checkpoint_joint_names,
+                "action_joint_source": args.action_joint_source,
+                "action_mapping_file": args.action_mapping_file,
+                "joint_name_normalization": args.joint_name_normalization,
                 "notes": notes,
             },
         }

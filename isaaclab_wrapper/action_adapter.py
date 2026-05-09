@@ -19,6 +19,7 @@ class ActionAdapter:
         env_action_dim: int | None = None,
         model_action_joint_names: list[str] | None = None,
         env_ctrl_joint_names: list[str] | None = None,
+        allow_schema_fallback: bool = True,
     ):
         self.expected_action_dim = expected_action_dim
         self.env_device = torch.device(env_device)
@@ -32,7 +33,10 @@ class ActionAdapter:
         self.env_action_dim = int(env_action_dim) if env_action_dim is not None else expected_action_dim
         self.model_action_joint_names = list(model_action_joint_names or [])
         self.env_ctrl_joint_names = list(env_ctrl_joint_names or [])
+        self.allow_schema_fallback = bool(allow_schema_fallback)
+        self._used_name_map = False
         self._arm_index_map = self._build_arm_index_map()
+        self._map_source = "name_map" if self._used_name_map else "schema_fallback_[0:14]"
 
     def _build_arm_index_map(self) -> list[int]:
         if self.action_mode != "arm_only":
@@ -45,8 +49,14 @@ class ActionAdapter:
         ):
             index_by_name = {name: idx for idx, name in enumerate(self.model_action_joint_names)}
             if all(name in index_by_name for name in self.env_ctrl_joint_names):
+                self._used_name_map = True
                 return [index_by_name[name] for name in self.env_ctrl_joint_names]
-        return list(range(data_schema.ACTION_ARM_DIM))
+        if self.allow_schema_fallback:
+            return list(range(data_schema.ACTION_ARM_DIM))
+        raise ValueError(
+            "Failed to build joint-name arm mapping and schema fallback is disabled. "
+            "Provide verified model_action_joint_names or enable fallback explicitly."
+        )
 
     def __call__(self, model_action: torch.Tensor) -> torch.Tensor:
         if not torch.is_tensor(model_action):
@@ -84,12 +94,11 @@ class ActionAdapter:
             env_action = torch.clamp(env_action, min=self.clip_min, max=self.clip_max)
 
         if self.debug:
-            map_src = "name_map" if self.model_action_joint_names and self.env_ctrl_joint_names else "schema_fallback_[0:14]"
             print(
-                f"[ActionAdapter] mode={self.action_mode} map_source={map_src} "
+                f"[ActionAdapter] mode={self.action_mode} map_source={self._map_source} "
                 f"model_action_shape={tuple(model_action.shape)} env_action_shape={tuple(env_action.shape)}"
             )
-            if self.action_mode == "arm_only" and map_src != "name_map":
+            if self.action_mode == "arm_only" and self._map_source != "name_map":
                 print("[ActionAdapter][WARNING] arm mapping uses fallback [0:14]. Verify joint-order metadata.")
 
         return env_action
