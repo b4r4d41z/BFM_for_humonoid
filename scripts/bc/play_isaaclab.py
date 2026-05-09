@@ -35,6 +35,18 @@ def _extract_checkpoint_joint_names(meta: dict[str, Any]) -> list[str]:
     return []
 
 
+def _extract_env_joint_names(env: Any) -> list[str]:
+    names: list[str] = []
+    if hasattr(env, "unwrapped"):
+        env = env.unwrapped
+    cfg = getattr(env, "cfg", None)
+    if cfg is not None:
+        cfg_names = getattr(cfg, "ctrl_joint_names", None)
+        if isinstance(cfg_names, (list, tuple)):
+            names = [str(x) for x in cfg_names]
+    return names
+
+
 def _compare_joint_orders(model_joint_names: list[str], env_joint_names: list[str]) -> str:
     if not model_joint_names:
         return "missing"
@@ -116,6 +128,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--contract_report_dir", type=str, default="runs/bc/isaaclab_contract")
 
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--action_mode", type=str, default="arm_only", choices=("arm_only", "identity"))
     return parser
 
 
@@ -178,13 +191,6 @@ def main() -> None:
             debug=args.debug,
             auto_adjust_dim=args.auto_adjust_obs_dim,
         )
-        act_adapter = ActionAdapter(
-            expected_action_dim=args.expected_action_dim,
-            env_device=args.device,
-            action_scale=args.action_scale,
-            clip_actions=args.clip_actions,
-            debug=args.debug,
-        )
 
         policy_runner = BCPolicyRunner(
             checkpoint_path=args.checkpoint,
@@ -203,6 +209,11 @@ def main() -> None:
         if expected_action_dim is None and policy_runner.expected_action_dim:
             expected_action_dim = policy_runner.expected_action_dim
 
+        env_cfg = getattr(env.unwrapped if hasattr(env, "unwrapped") else env, "cfg", None)
+        env_action_dim = int(getattr(env_cfg, "action_space", 0)) if env_cfg is not None else None
+        env_ctrl_joint_names = _extract_env_joint_names(env)
+        checkpoint_joint_names = _extract_checkpoint_joint_names(policy_runner.checkpoint_meta)
+
         # Rebuild adapters with inferred dims for stricter checks and better key selection.
         obs_adapter = ObservationAdapter(
             expected_obs_dim=expected_obs_dim,
@@ -216,6 +227,11 @@ def main() -> None:
             action_scale=args.action_scale,
             clip_actions=args.clip_actions,
             debug=args.debug,
+            action_mode=args.action_mode,
+            model_action_dim=expected_action_dim,
+            env_action_dim=env_action_dim,
+            model_action_joint_names=checkpoint_joint_names,
+            env_ctrl_joint_names=env_ctrl_joint_names,
         )
         print(f"[play_isaaclab] expected obs dim: {expected_obs_dim}")
         print(f"[play_isaaclab] expected action dim: {expected_action_dim}")
@@ -224,9 +240,6 @@ def main() -> None:
         env_cfg = getattr(unwrapped_env, "cfg", None)
         env_action_space = getattr(env_cfg, "action_space", None)
         env_observation_space = getattr(env_cfg, "observation_space", None)
-        env_ctrl_joint_names = list(getattr(env_cfg, "ctrl_joint_names", [])) if env_cfg else []
-
-        checkpoint_joint_names = _extract_checkpoint_joint_names(policy_runner.checkpoint_meta)
         mapping_status = _compare_joint_orders(checkpoint_joint_names, env_ctrl_joint_names)
         verification_status = "verified" if mapping_status == "exact_match" else "provisional"
         notes = (
@@ -288,7 +301,7 @@ def main() -> None:
                 check_device("model_action", model_action, args.model_device)
 
                 env_action = act_adapter(model_action)
-                check_shape("env_action", env_action, expected_last_dim=expected_action_dim)
+                check_shape("env_action", env_action, expected_last_dim=env_action_dim)
                 check_tensor_finite("env_action", env_action)
                 check_device("env_action", env_action, args.device)
 

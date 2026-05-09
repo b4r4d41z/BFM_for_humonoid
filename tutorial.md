@@ -1,4 +1,4 @@
-# Stating Offline training
+# Stating Offline training | Behavioral Cloning
 
 1. inside terminal launch tensorboard and training
 
@@ -15,17 +15,15 @@ PYTHONPATH=$PWD python scripts/bc/train.py \
   --save_path checkpoints/bc/sorting_food_exp1
 ```
 
-# Testing trained policies from checkpoint 
+# Testing trained policies from checkpoint | Behavioral Cloning
 
 1. To start choose certain policy inside checkpoints folder:
 
 ```bash
-PYTHONPATH=$PWD python scripts/bc/play_isaaclab.py \
+python -m scripts.bc.play_isaaclab \
   --task Template-Test-Training-Direct-v0 \
-  --checkpoint checkpoints/bc/<experiment>/bc_offline.pt \
-  --num_envs 1 \
-  --device cuda:0 \
-  --model_device cuda:0 \
+  --checkpoint /home/lab/Desktop/ivan/BFM_for_humonoid/checkpoints/bc/best.pt \
+  --action_mode arm_only \
   --max_steps 1000 \
   --render \
   --debug
