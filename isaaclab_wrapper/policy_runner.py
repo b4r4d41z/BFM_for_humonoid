@@ -21,8 +21,13 @@ class BCPolicyRunner:
 
         payload = torch.load(self.checkpoint_path, map_location=self.device)
         state_dict, meta = self._extract_state_dict(payload)
+        self.checkpoint_meta: dict[str, Any] = meta if isinstance(meta, dict) else {}
 
-        self.model, self.model_kind = self._build_model(state_dict=state_dict, meta=meta, model_kwargs=model_kwargs)
+        self.model, self.model_kind = self._build_model(
+            state_dict=state_dict,
+            meta=self.checkpoint_meta,
+            model_kwargs=model_kwargs,
+        )
         self.expected_obs_dim: int | None = None
         self.expected_action_dim: int | None = None
         if self.model_kind == "fbcpr_model":

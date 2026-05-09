@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import traceback
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -20,6 +23,65 @@ from isaaclab_wrapper.sanity_checks import (
     check_tensor_finite,
     print_debug_tensor,
 )
+from bc.data import schema as data_schema
+
+
+def _extract_checkpoint_joint_names(meta: dict[str, Any]) -> list[str]:
+    candidate_keys = ("joint_names", "meta_joint_names", "action_joint_names", "obs_joint_names")
+    for key in candidate_keys:
+        value = meta.get(key)
+        if isinstance(value, (list, tuple)) and value:
+            return [str(x) for x in value]
+    return []
+
+
+def _compare_joint_orders(model_joint_names: list[str], env_joint_names: list[str]) -> str:
+    if not model_joint_names:
+        return "missing"
+    if model_joint_names == env_joint_names:
+        return "exact_match"
+    if set(model_joint_names) & set(env_joint_names):
+        return "partial"
+    return "missing"
+
+
+def _write_contract_report(report: dict[str, Any], output_dir: str) -> None:
+    out_dir = Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    json_path = out_dir / f"contract_report_{ts}.json"
+    md_path = out_dir / f"contract_report_{ts}.md"
+    json_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    lines = [
+        "# IsaacLab BC Contract Report",
+        "",
+        f"- generated_utc: {report['generated_utc']}",
+        f"- task: {report['task']}",
+        f"- checkpoint: {report['checkpoint']}",
+        "",
+        "## Dimensions",
+        f"- model_obs_dim: {report['dims']['model_obs_dim']}",
+        f"- model_action_dim: {report['dims']['model_action_dim']}",
+        f"- env_observation_space: {report['dims']['env_observation_space']}",
+        f"- env_action_space: {report['dims']['env_action_space']}",
+        "",
+        "## Env controlled joints",
+    ]
+    lines.extend([f"- {name}" for name in report["env_ctrl_joint_names"]])
+    lines.extend(
+        [
+            "",
+            "## Action channel order source",
+            f"- dataset_schema_arm_hand_split: {report['action_channel_order']['dataset_schema_split']}",
+            f"- checkpoint_joint_names_status: {report['action_channel_order']['checkpoint_joint_names_status']}",
+            f"- mapping_status: {report['action_channel_order']['mapping_status']}",
+            f"- notes: {report['action_channel_order']['notes']}",
+        ]
+    )
+    md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"[play_isaaclab] contract report saved: {json_path}")
+    print(f"[play_isaaclab] contract report saved: {md_path}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -51,6 +113,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--record_rollout", action="store_true")
     parser.add_argument("--rollout_output_dir", type=str, default="runs/bc/isaaclab_rollouts")
+    parser.add_argument("--contract_report_dir", type=str, default="runs/bc/isaaclab_contract")
 
     parser.add_argument("--debug", action="store_true")
     return parser
@@ -156,6 +219,58 @@ def main() -> None:
         )
         print(f"[play_isaaclab] expected obs dim: {expected_obs_dim}")
         print(f"[play_isaaclab] expected action dim: {expected_action_dim}")
+
+        unwrapped_env = env.unwrapped if hasattr(env, "unwrapped") else env
+        env_cfg = getattr(unwrapped_env, "cfg", None)
+        env_action_space = getattr(env_cfg, "action_space", None)
+        env_observation_space = getattr(env_cfg, "observation_space", None)
+        env_ctrl_joint_names = list(getattr(env_cfg, "ctrl_joint_names", [])) if env_cfg else []
+
+        checkpoint_joint_names = _extract_checkpoint_joint_names(policy_runner.checkpoint_meta)
+        mapping_status = _compare_joint_orders(checkpoint_joint_names, env_ctrl_joint_names)
+        verification_status = "verified" if mapping_status == "exact_match" else "provisional"
+        notes = (
+            "Dataset schema defines split arm=[0:14], hand=[14:26]. "
+            "If checkpoint joint names are absent or mismatched, arm mapping remains provisional."
+        )
+
+        print("[play_isaaclab] ===== CONTRACT: model dims =====")
+        print(f"[play_isaaclab] model expected_obs_dim={expected_obs_dim}, expected_action_dim={expected_action_dim}")
+        print("[play_isaaclab] ===== CONTRACT: env dims =====")
+        print(f"[play_isaaclab] env observation_space={env_observation_space}, env action_space={env_action_space}")
+        print("[play_isaaclab] ===== CONTRACT: env joint order =====")
+        print(f"[play_isaaclab] env ctrl_joint_names({len(env_ctrl_joint_names)}): {env_ctrl_joint_names}")
+        print("[play_isaaclab] ===== CONTRACT: model action channel order source =====")
+        print(
+            "[play_isaaclab] dataset schema split: arm=[0:14], hand=[14:26], "
+            f"checkpoint_joint_names_status={mapping_status}, verification={verification_status}"
+        )
+        if verification_status != "verified":
+            print(f"[play_isaaclab][WARNING] action mapping is provisional. {notes}")
+
+        report = {
+            "generated_utc": datetime.now(timezone.utc).isoformat(),
+            "task": args.task,
+            "checkpoint": args.checkpoint,
+            "dims": {
+                "model_obs_dim": expected_obs_dim,
+                "model_action_dim": expected_action_dim,
+                "env_observation_space": env_observation_space,
+                "env_action_space": env_action_space,
+            },
+            "env_ctrl_joint_names": env_ctrl_joint_names,
+            "action_channel_order": {
+                "dataset_schema_split": {
+                    "arm": [0, data_schema.ACTION_ARM_DIM],
+                    "hand": [data_schema.ACTION_ARM_DIM, data_schema.ACTION_FULL_DIM],
+                },
+                "checkpoint_joint_names_status": mapping_status,
+                "mapping_status": verification_status,
+                "checkpoint_joint_names": checkpoint_joint_names,
+                "notes": notes,
+            },
+        }
+        _write_contract_report(report=report, output_dir=args.contract_report_dir)
 
         raw_obs, _ = _unwrap_reset(env.reset())
         print(f"[play_isaaclab] raw observation type: {type(raw_obs).__name__}")
