@@ -97,29 +97,35 @@ class TestTrainingEnvCfg(DirectRLEnvCfg):
 
 
     table_top_z = 1
+    ball_radius = 0.035
+    ball_spawn_margin = 0.01
+    red_ball_x_range = (0.40, 0.58)
+    red_ball_y_range = (-0.22, -0.06)
+    yellow_ball_x_range = (0.40, 0.58)
+    yellow_ball_y_range = (0.06, 0.22)
 
     red_ball_cfg: RigidObjectCfg = RigidObjectCfg(
         prim_path="/World/envs/env_.*/RedBall",
         spawn=sim_utils.SphereCfg(
-            radius=0.035,
+            radius=ball_radius,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(),
             collision_props=sim_utils.CollisionPropertiesCfg(),
             mass_props=sim_utils.MassPropertiesCfg(mass=0.06),
             visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
         ),
-        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.45, -0.12, table_top_z + 0.035)),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.45, -0.12, table_top_z + ball_radius + ball_spawn_margin)),
     )
 
     yellow_ball_cfg: RigidObjectCfg = RigidObjectCfg(
         prim_path="/World/envs/env_.*/YellowBall",
         spawn=sim_utils.SphereCfg(
-            radius=0.035,
+            radius=ball_radius,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(),
             collision_props=sim_utils.CollisionPropertiesCfg(),
             mass_props=sim_utils.MassPropertiesCfg(mass=0.06),
             visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 1.0, 0.0)),
         ),
-        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.45, 0.12, table_top_z + 0.035)),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.45, 0.12, table_top_z + ball_radius + ball_spawn_margin)),
     )
 
     container_base_cfg: RigidObjectCfg = RigidObjectCfg(

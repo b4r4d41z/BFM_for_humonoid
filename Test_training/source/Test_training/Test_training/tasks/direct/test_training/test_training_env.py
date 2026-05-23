@@ -100,10 +100,32 @@ class TestTrainingEnv(DirectRLEnv):
         return terminated, time_out
 
     def _reset_objects(self, env_ids: Sequence[int]) -> None:
-        ball_names = ("red_ball", "yellow_ball")
-        for name in ball_names:
+        env_ids = torch.as_tensor(env_ids, device=self.device, dtype=torch.long)
+        num_envs = len(env_ids)
+
+        def _sample_xy(x_range: tuple[float, float], y_range: tuple[float, float]) -> tuple[torch.Tensor, torch.Tensor]:
+            x = x_range[0] + (x_range[1] - x_range[0]) * torch.rand((num_envs,), device=self.device)
+            y = y_range[0] + (y_range[1] - y_range[0]) * torch.rand((num_envs,), device=self.device)
+            return x, y
+
+        z = float(self.cfg.table_top_z) + float(self.cfg.ball_radius) + float(self.cfg.ball_spawn_margin)
+
+        red_x, red_y = _sample_xy(self.cfg.red_ball_x_range, self.cfg.red_ball_y_range)
+        yellow_x, yellow_y = _sample_xy(self.cfg.yellow_ball_x_range, self.cfg.yellow_ball_y_range)
+
+        balls_setup = (
+            ("red_ball", red_x, red_y),
+            ("yellow_ball", yellow_x, yellow_y),
+        )
+        for name, x_vals, y_vals in balls_setup:
             obj = self.scene.rigid_objects[name]
             root_state = obj.data.default_root_state[env_ids].clone()
+            root_state[:, :3] = 0.0
+            root_state[:, 0] = x_vals
+            root_state[:, 1] = y_vals
+            root_state[:, 2] = z
+            root_state[:, 3:7] = 0.0
+            root_state[:, 3] = 1.0
             root_state[:, :3] += self.scene.env_origins[env_ids]
             root_state[:, 7:] = 0.0
             obj.write_root_pose_to_sim(root_state[:, :7], env_ids)
