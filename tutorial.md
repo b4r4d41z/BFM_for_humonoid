@@ -29,7 +29,7 @@ python -m scripts.bc.play_isaaclab \
   --gripper_closed_prototype 69 99 42 44 61 60 \
   --gripper_open_threshold 0.35 \
   --gripper_close_threshold 0.65 \
-  --max_steps 1000 \
+  --max_steps 300 \
   --render \
   --debug
 ```

@@ -96,7 +96,7 @@ class TestTrainingEnvCfg(DirectRLEnvCfg):
     )
 
 
-    table_top_z = 0.75
+    table_top_z = 1
 
     red_ball_cfg: RigidObjectCfg = RigidObjectCfg(
         prim_path="/World/envs/env_.*/RedBall",
@@ -123,7 +123,7 @@ class TestTrainingEnvCfg(DirectRLEnvCfg):
     )
 
     container_base_cfg: RigidObjectCfg = RigidObjectCfg(
-        prim_path="/World/envs/env_.*/BlueContainer/Base",
+        prim_path="/World/envs/env_.*/BlueContainerBase",
         spawn=sim_utils.CuboidCfg(
             size=(0.22, 0.22, 0.025),
             rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
@@ -134,7 +134,7 @@ class TestTrainingEnvCfg(DirectRLEnvCfg):
     )
 
     container_left_wall_cfg: RigidObjectCfg = RigidObjectCfg(
-        prim_path="/World/envs/env_.*/BlueContainer/LeftWall",
+        prim_path="/World/envs/env_.*/BlueContainerLeftWall",
         spawn=sim_utils.CuboidCfg(
             size=(0.025, 0.22, 0.09),
             rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
@@ -145,7 +145,7 @@ class TestTrainingEnvCfg(DirectRLEnvCfg):
     )
 
     container_right_wall_cfg: RigidObjectCfg = RigidObjectCfg(
-        prim_path="/World/envs/env_.*/BlueContainer/RightWall",
+        prim_path="/World/envs/env_.*/BlueContainerRightWall",
         spawn=sim_utils.CuboidCfg(
             size=(0.025, 0.22, 0.09),
             rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
@@ -156,7 +156,7 @@ class TestTrainingEnvCfg(DirectRLEnvCfg):
     )
 
     container_front_wall_cfg: RigidObjectCfg = RigidObjectCfg(
-        prim_path="/World/envs/env_.*/BlueContainer/FrontWall",
+        prim_path="/World/envs/env_.*/BlueContainerFrontWall",
         spawn=sim_utils.CuboidCfg(
             size=(0.22, 0.025, 0.09),
             rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
@@ -167,7 +167,7 @@ class TestTrainingEnvCfg(DirectRLEnvCfg):
     )
 
     container_back_wall_cfg: RigidObjectCfg = RigidObjectCfg(
-        prim_path="/World/envs/env_.*/BlueContainer/BackWall",
+        prim_path="/World/envs/env_.*/BlueContainerBackWall",
         spawn=sim_utils.CuboidCfg(
             size=(0.22, 0.025, 0.09),
             rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
