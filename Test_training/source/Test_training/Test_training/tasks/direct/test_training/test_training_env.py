@@ -8,7 +8,7 @@ from collections.abc import Sequence
 import torch
 
 import isaaclab.sim as sim_utils
-from isaaclab.assets import Articulation
+from isaaclab.assets import Articulation, RigidObject
 from isaaclab.envs import DirectRLEnv
 from isaaclab.sim.spawners.from_files import UsdFileCfg
 
@@ -42,6 +42,14 @@ class TestTrainingEnv(DirectRLEnv):
         # Spawn robot (must be inside env_0 before cloning)
         self.robot = Articulation(self.cfg.robot_cfg)
 
+        self.red_ball = RigidObject(self.cfg.red_ball_cfg)
+        self.yellow_ball = RigidObject(self.cfg.yellow_ball_cfg)
+        self.container_base = RigidObject(self.cfg.container_base_cfg)
+        self.container_left_wall = RigidObject(self.cfg.container_left_wall_cfg)
+        self.container_right_wall = RigidObject(self.cfg.container_right_wall_cfg)
+        self.container_front_wall = RigidObject(self.cfg.container_front_wall_cfg)
+        self.container_back_wall = RigidObject(self.cfg.container_back_wall_cfg)
+
         # Clone environments
         self.scene.clone_environments(copy_from_source=False)
 
@@ -49,6 +57,13 @@ class TestTrainingEnv(DirectRLEnv):
             self.scene.filter_collisions(global_prim_paths=[])
 
         self.scene.articulations["robot"] = self.robot
+        self.scene.rigid_objects["red_ball"] = self.red_ball
+        self.scene.rigid_objects["yellow_ball"] = self.yellow_ball
+        self.scene.rigid_objects["container_base"] = self.container_base
+        self.scene.rigid_objects["container_left_wall"] = self.container_left_wall
+        self.scene.rigid_objects["container_right_wall"] = self.container_right_wall
+        self.scene.rigid_objects["container_front_wall"] = self.container_front_wall
+        self.scene.rigid_objects["container_back_wall"] = self.container_back_wall
 
         light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
         light_cfg.func("/World/Light", light_cfg)
@@ -84,6 +99,16 @@ class TestTrainingEnv(DirectRLEnv):
         time_out = self.episode_length_buf >= self.max_episode_length - 1
         return terminated, time_out
 
+    def _reset_objects(self, env_ids: Sequence[int]) -> None:
+        ball_names = ("red_ball", "yellow_ball")
+        for name in ball_names:
+            obj = self.scene.rigid_objects[name]
+            root_state = obj.data.default_root_state[env_ids].clone()
+            root_state[:, :3] += self.scene.env_origins[env_ids]
+            root_state[:, 7:] = 0.0
+            obj.write_root_pose_to_sim(root_state[:, :7], env_ids)
+            obj.write_root_velocity_to_sim(root_state[:, 7:], env_ids)
+
     def _reset_idx(self, env_ids: Sequence[int] | None):
         if env_ids is None:
             env_ids = self.robot._ALL_INDICES
@@ -105,3 +130,4 @@ class TestTrainingEnv(DirectRLEnv):
         self.robot.write_root_pose_to_sim(default_root_state[:, :7], env_ids)
         self.robot.write_root_velocity_to_sim(default_root_state[:, 7:], env_ids)
         self.robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
+        self._reset_objects(env_ids)

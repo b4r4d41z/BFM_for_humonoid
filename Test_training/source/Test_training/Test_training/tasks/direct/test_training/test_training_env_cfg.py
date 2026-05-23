@@ -8,10 +8,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from isaaclab.actuators import ImplicitActuatorCfg
-from isaaclab.assets import ArticulationCfg
+from isaaclab.assets import ArticulationCfg, RigidObjectCfg
 from isaaclab.envs import DirectRLEnvCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import SimulationCfg
+import isaaclab.sim as sim_utils
 from isaaclab.sim.spawners.from_files import UsdFileCfg
 from isaaclab.utils import configclass
 
@@ -93,3 +94,86 @@ class TestTrainingEnvCfg(DirectRLEnvCfg):
             ),
         },
     )
+
+
+    table_top_z = 0.75
+
+    red_ball_cfg: RigidObjectCfg = RigidObjectCfg(
+        prim_path="/World/envs/env_.*/RedBall",
+        spawn=sim_utils.SphereCfg(
+            radius=0.035,
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(),
+            collision_props=sim_utils.CollisionPropertiesCfg(),
+            mass_props=sim_utils.MassPropertiesCfg(mass=0.06),
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
+        ),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.45, -0.12, table_top_z + 0.035)),
+    )
+
+    yellow_ball_cfg: RigidObjectCfg = RigidObjectCfg(
+        prim_path="/World/envs/env_.*/YellowBall",
+        spawn=sim_utils.SphereCfg(
+            radius=0.035,
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(),
+            collision_props=sim_utils.CollisionPropertiesCfg(),
+            mass_props=sim_utils.MassPropertiesCfg(mass=0.06),
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 1.0, 0.0)),
+        ),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.45, 0.12, table_top_z + 0.035)),
+    )
+
+    container_base_cfg: RigidObjectCfg = RigidObjectCfg(
+        prim_path="/World/envs/env_.*/BlueContainer/Base",
+        spawn=sim_utils.CuboidCfg(
+            size=(0.22, 0.22, 0.025),
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
+            collision_props=sim_utils.CollisionPropertiesCfg(),
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.1, 0.2, 1.0)),
+        ),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.65, 0.0, table_top_z + 0.0125)),
+    )
+
+    container_left_wall_cfg: RigidObjectCfg = RigidObjectCfg(
+        prim_path="/World/envs/env_.*/BlueContainer/LeftWall",
+        spawn=sim_utils.CuboidCfg(
+            size=(0.025, 0.22, 0.09),
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
+            collision_props=sim_utils.CollisionPropertiesCfg(),
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.1, 0.2, 1.0)),
+        ),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.7475, 0.0, table_top_z + 0.045)),
+    )
+
+    container_right_wall_cfg: RigidObjectCfg = RigidObjectCfg(
+        prim_path="/World/envs/env_.*/BlueContainer/RightWall",
+        spawn=sim_utils.CuboidCfg(
+            size=(0.025, 0.22, 0.09),
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
+            collision_props=sim_utils.CollisionPropertiesCfg(),
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.1, 0.2, 1.0)),
+        ),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.5525, 0.0, table_top_z + 0.045)),
+    )
+
+    container_front_wall_cfg: RigidObjectCfg = RigidObjectCfg(
+        prim_path="/World/envs/env_.*/BlueContainer/FrontWall",
+        spawn=sim_utils.CuboidCfg(
+            size=(0.22, 0.025, 0.09),
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
+            collision_props=sim_utils.CollisionPropertiesCfg(),
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.1, 0.2, 1.0)),
+        ),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.65, 0.0975, table_top_z + 0.045)),
+    )
+
+    container_back_wall_cfg: RigidObjectCfg = RigidObjectCfg(
+        prim_path="/World/envs/env_.*/BlueContainer/BackWall",
+        spawn=sim_utils.CuboidCfg(
+            size=(0.22, 0.025, 0.09),
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
+            collision_props=sim_utils.CollisionPropertiesCfg(),
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.1, 0.2, 1.0)),
+        ),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.65, -0.0975, table_top_z + 0.045)),
+    )
+
