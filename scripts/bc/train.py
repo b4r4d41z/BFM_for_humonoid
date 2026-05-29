@@ -12,30 +12,26 @@ import torch
 
 
 from bc.buffers.buffers import OfflineTrajectoryBuffer
+from bc.data.hdf5_discovery import discover_h5_files, limit_h5_files, print_h5_dataset_summary
 from bc.fb_cpr.agent import AgentConfig, FBCPRAgent, TrainConfig
 from bc.fb_cpr.model import ModelConfig
-
-
-def collect_h5_files(path: Path, max_files: int) -> list[Path]:
-    if path.is_file():
-        if path.suffix != ".h5":
-            raise ValueError(f"Expected .h5 file, got: {path}")
-        return [path]
-
-    if not path.exists():
-        raise FileNotFoundError(f"Path does not exist: {path}")
-
-    files = sorted(path.glob("*.h5"))
-    if len(files) == 0:
-        raise FileNotFoundError(f"No .h5 files found in: {path}")
-
-    return files[:max_files]
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser("BFM offline BC trainer")
 
-    parser.add_argument("--data", type=str, required=True, help="Path to one .h5 file or directory with .h5")
+    parser.add_argument(
+        "--data",
+        type=str,
+        nargs="+",
+        required=True,
+        help="One or more paths: .h5 files and/or directories with .h5 files.",
+    )
+    parser.add_argument(
+        "--recursive",
+        action="store_true",
+        help="If set, scan data directories recursively for .h5 files.",
+    )
     parser.add_argument("--max_files", type=int, default=8)
 
     parser.add_argument(
@@ -347,12 +343,17 @@ def main() -> None:
     args = build_parser().parse_args()
     buffer_device, model_device = resolve_devices(args)
 
-    data_path = Path(args.data).expanduser().resolve()
-    h5_files = collect_h5_files(data_path, max_files=args.max_files)
+    data_paths = [Path(p).expanduser().resolve() for p in args.data]
+    discovered_h5_files = discover_h5_files(data_paths, recursive=args.recursive)
+    h5_files = limit_h5_files(discovered_h5_files, max_files=args.max_files)
 
-    print("[BFM offline train] selected H5 files:")
-    for i, p in enumerate(h5_files):
-        print(f"  [{i}] {p}")
+    print_h5_dataset_summary(
+        data_roots=data_paths,
+        recursive=args.recursive,
+        discovered_h5_files=discovered_h5_files,
+        selected_h5_files=h5_files,
+        max_files=args.max_files,
+    )
 
     full_buffer = build_buffer_from_files(
         h5_files,

@@ -15,22 +15,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from bc.buffers.buffers import OfflineTrajectoryBuffer
-
-
-def collect_h5_files(path: Path, max_files: int) -> list[Path]:
-    if path.is_file():
-        if path.suffix != ".h5":
-            raise ValueError(f"Expected .h5 file, got: {path}")
-        return [path]
-
-    if not path.exists():
-        raise FileNotFoundError(f"Path does not exist: {path}")
-
-    files = sorted(path.glob("*.h5"))
-    if len(files) == 0:
-        raise FileNotFoundError(f"No .h5 files found in: {path}")
-
-    return files[:max_files]
+from bc.data.hdf5_discovery import discover_h5_files, limit_h5_files, print_h5_dataset_summary
 
 
 def tensor_shape_str(x: Any) -> str:
@@ -130,8 +115,14 @@ def main() -> None:
     parser.add_argument(
         "--data",
         type=str,
+        nargs="+",
         required=True,
-        help="Path to one .h5 file or a directory with .h5 files",
+        help="One or more paths: .h5 files and/or directories with .h5 files",
+    )
+    parser.add_argument(
+        "--recursive",
+        action="store_true",
+        help="If set, scan data directories recursively for .h5 files",
     )
     parser.add_argument(
         "--max_files",
@@ -170,12 +161,18 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    data_path = Path(args.data).expanduser().resolve()
-    h5_files = collect_h5_files(data_path, max_files=args.max_files)
+    data_paths = [Path(path).expanduser().resolve() for path in args.data]
+    discovered_h5_files = discover_h5_files(data_paths, recursive=args.recursive)
+    h5_files = limit_h5_files(discovered_h5_files, max_files=args.max_files)
 
-    print("Selected H5 files:")
-    for i, path in enumerate(h5_files):
-        print(f"  [{i}] {path}")
+    print_h5_dataset_summary(
+        data_roots=data_paths,
+        recursive=args.recursive,
+        discovered_h5_files=discovered_h5_files,
+        selected_h5_files=h5_files,
+        max_files=args.max_files,
+        prefix="[BFM buffer check]",
+    )
 
     buffer = OfflineTrajectoryBuffer.from_hdf5_files(
         hdf5_paths=h5_files,
