@@ -750,6 +750,9 @@ class OfflineTrajectoryBuffer:
             )
 
         for i, path in enumerate(paths, start=1):
+            if log_prefix is not None:
+                pct = int(i / max(1, len(paths)) * 100)
+                print(f"{log_prefix} eager load progress={pct}% files={i}/{len(paths)}", flush=True)
             file_prefix = f"{log_prefix} [{i}/{len(paths)}]" if log_prefix is not None else None
             buffer.add_hdf5_file(
                 hdf5_path=path,
