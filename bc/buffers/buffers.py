@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from functools import singledispatch
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Iterable
 
 import numpy as np
@@ -689,14 +690,44 @@ class OfflineTrajectoryBuffer:
         hdf5_path: str | Path,
         use_images: bool = True,
         use_text: bool = True,
-    ) -> None:
+        log_prefix: str | None = None,
+    ) -> int:
+        start_time = perf_counter()
+        if log_prefix is not None:
+            print(f"{log_prefix} opening HDF5: {hdf5_path}", flush=True)
+
         dataset = HDF5DataStreamLoader(
             hdf5_path=hdf5_path,
             use_images=use_images,
             use_text=use_text,
         )
-        episode = self.build_episode_from_loader_dataset(dataset)
+        open_elapsed = perf_counter() - start_time
+        dataset_len = len(dataset)
+        if log_prefix is not None:
+            print(
+                f"{log_prefix} opened/validated HDF5: {hdf5_path} "
+                f"frames={dataset_len} elapsed={open_elapsed:.2f}s; reading into buffer...",
+                flush=True,
+            )
+
+        read_start = perf_counter()
+        try:
+            episode = self.build_episode_from_loader_dataset(dataset)
+        finally:
+            dataset.close()
         self.add_episode(episode)
+        total_elapsed = perf_counter() - start_time
+        read_elapsed = perf_counter() - read_start
+
+        if log_prefix is not None:
+            print(
+                f"{log_prefix} loaded HDF5: {hdf5_path} "
+                f"frames={dataset_len} read_elapsed={read_elapsed:.2f}s total_elapsed={total_elapsed:.2f}s "
+                f"episodes_loaded={self.num_episodes()} total_frames_loaded={self.total_num_steps()}",
+                flush=True,
+            )
+
+        return dataset_len
 
     @classmethod
     def from_hdf5_files(
@@ -706,14 +737,32 @@ class OfflineTrajectoryBuffer:
         use_text: bool = True,
         device: str | torch.device = "cpu",
         seed: int = 42,
+        log_prefix: str | None = None,
     ) -> "OfflineTrajectoryBuffer":
         buffer = cls(device=device, seed=seed)
+        paths = list(hdf5_paths)
 
-        for path in hdf5_paths:
+        if log_prefix is not None:
+            print(
+                f"{log_prefix} loading {len(paths)} HDF5 file(s) into OfflineTrajectoryBuffer "
+                f"on device={buffer.storage_device}",
+                flush=True,
+            )
+
+        for i, path in enumerate(paths, start=1):
+            file_prefix = f"{log_prefix} [{i}/{len(paths)}]" if log_prefix is not None else None
             buffer.add_hdf5_file(
                 hdf5_path=path,
                 use_images=use_images,
                 use_text=use_text,
+                log_prefix=file_prefix,
+            )
+
+        if log_prefix is not None:
+            print(
+                f"{log_prefix} finished buffer load: episodes={buffer.num_episodes()} "
+                f"frames={buffer.total_num_steps()} transitions={len(buffer)}",
+                flush=True,
             )
 
         return buffer

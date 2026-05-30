@@ -134,6 +134,7 @@ def build_buffer_from_files(
     seed: int,
     use_images: bool = True,
     use_text: bool = True,
+    log_prefix: str | None = None,
 ) -> OfflineTrajectoryBuffer:
     return OfflineTrajectoryBuffer.from_hdf5_files(
         hdf5_paths=h5_files,
@@ -141,6 +142,7 @@ def build_buffer_from_files(
         use_text=use_text,
         device=buffer_device,
         seed=seed,
+        log_prefix=log_prefix,
     )
 
 
@@ -354,13 +356,26 @@ def main() -> None:
         selected_h5_files=h5_files,
         max_files=args.max_files,
     )
+    if any("/gvfs/" in str(path) for path in data_paths):
+        print(
+            "[BFM offline train][warn] GVFS path detected. HDF5 reads over GVFS/SMB can be slow; "
+            "if loading stalls here, copy the selected .h5 files to a local SSD and run --data on that local folder.",
+            flush=True,
+        )
 
+    print("[BFM offline train] building full offline buffer from selected HDF5 files...", flush=True)
     full_buffer = build_buffer_from_files(
         h5_files,
         buffer_device=buffer_device,
         seed=args.split_seed,
         use_images=True,
         use_text=True,
+        log_prefix="[BFM offline train][hdf5]",
+    )
+    print(
+        f"[BFM offline train] full buffer ready: episodes={full_buffer.num_episodes()} "
+        f"frames={full_buffer.total_num_steps()} transitions={len(full_buffer)}",
+        flush=True,
     )
 
     train_ids, val_ids, split_info = split_episode_ids(
@@ -371,8 +386,16 @@ def main() -> None:
         split_by=args.split_by,
     )
 
+    print("[BFM offline train] building train/validation buffers...", flush=True)
     train_buffer = build_sub_buffer(full_buffer, train_ids, buffer_device=buffer_device, seed=args.split_seed)
     val_buffer = build_sub_buffer(full_buffer, val_ids, buffer_device=buffer_device, seed=args.split_seed + 1)
+    print(
+        f"[BFM offline train] train buffer: episodes={train_buffer.num_episodes()} "
+        f"frames={train_buffer.total_num_steps()} transitions={len(train_buffer)}; "
+        f"val buffer: episodes={val_buffer.num_episodes()} frames={val_buffer.total_num_steps()} "
+        f"transitions={len(val_buffer)}",
+        flush=True,
+    )
 
     print(
         "[BFM offline train] split "
@@ -418,10 +441,16 @@ def main() -> None:
     last_path, best_path, alias_path = checkpoint_paths(args.save_path)
     tb_writer = create_tensorboard_writer(args, split_info)
 
-    print("[BFM offline train] start updates")
-    print(f"[BFM offline train] buffer_device={buffer_device} model_device={model_device}")
+    print(
+        f"[BFM offline train] training loop starting: start_step={start_step} updates={int(args.updates)} "
+        f"batch_size={args.batch_size} seq_len={args.seq_len}",
+        flush=True,
+    )
+    print(f"[BFM offline train] buffer_device={buffer_device} model_device={model_device}", flush=True)
 
     for step in range(start_step, int(args.updates) + 1):
+        if step == start_step or step % int(args.print_every) == 0:
+            print(f"[BFM offline train] update start step={step}", flush=True)
         if args.seq_len > 1:
             batch = train_buffer.sample_sequences(batch_size=args.batch_size, seq_len=args.seq_len, device=buffer_device)
         else:

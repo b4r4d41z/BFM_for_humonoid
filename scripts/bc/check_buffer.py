@@ -180,6 +180,7 @@ def main() -> None:
         use_text=True,
         device=args.device,
         seed=42,
+        log_prefix="[BFM buffer check][hdf5]",
     )
 
     print("\nBuffer summary:")
