@@ -4,17 +4,32 @@ import argparse
 import math
 import random
 import sys
+from itertools import cycle
+from time import perf_counter
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import torch
+from torch.utils.data import DataLoader
 
 
 from bc.buffers.buffers import OfflineTrajectoryBuffer
 from bc.data.hdf5_discovery import discover_h5_files, limit_h5_files, print_h5_dataset_summary
+from bc.data.hdf5_streaming_dataset import HDF5StreamingDataset
 from bc.fb_cpr.agent import AgentConfig, FBCPRAgent, TrainConfig
 from bc.fb_cpr.model import ModelConfig
+
+
+def str_to_bool(value: str | bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    lowered = value.strip().lower()
+    if lowered in {"1", "true", "yes", "y", "on"}:
+        return True
+    if lowered in {"0", "false", "no", "n", "off"}:
+        return False
+    raise argparse.ArgumentTypeError(f"Expected true/false, got {value!r}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -33,6 +48,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="If set, scan data directories recursively for .h5 files.",
     )
     parser.add_argument("--max_files", type=int, default=8)
+    parser.add_argument("--data_loading", type=str, default="eager", choices=["eager", "streaming"])
+    parser.add_argument("--use_images", type=str_to_bool, default=True, help="Read real images from HDF5 (true/false). False uses zero dummy images for model compatibility.")
+    parser.add_argument("--cameras", type=str, default="head,left_wrist,right_wrist", help="Comma-separated cameras to read in streaming mode.")
+    parser.add_argument("--image_size", type=int, default=None, help="Resize images to square size in streaming mode. Default keeps HDF5 resolution.")
+    parser.add_argument("--frame_stride", type=int, default=1, help="Use every Nth transition while building streaming index.")
+    parser.add_argument("--num_workers", type=int, default=0, help="DataLoader workers for streaming mode.")
+    parser.add_argument("--pin_memory", action="store_true", help="Pin DataLoader memory for non_blocking GPU copies.")
+    parser.add_argument("--persistent_workers", action="store_true", help="Keep DataLoader workers alive between epochs (requires num_workers > 0).")
+    parser.add_argument("--prefetch_factor", type=int, default=None, help="DataLoader prefetch_factor when num_workers > 0.")
+    parser.add_argument("--amp", action="store_true", help="Enable torch.autocast for forward/loss.")
+    parser.add_argument("--amp_dtype", type=str, default="bf16", choices=["bf16", "fp16"], help="Autocast dtype.")
 
     parser.add_argument(
         "--device",
@@ -239,6 +265,71 @@ def build_sub_buffer(
     return sub
 
 
+
+def warn_about_path(paths: list[Path], *, prefix: str = "[BFM offline train]") -> None:
+    for path in paths:
+        text = str(path)
+        if text.startswith("/run/user/1000/gvfs/") or "/gvfs/" in text:
+            print(f"{prefix}[warn] You are using a GVFS SMB path. For HDF5 training, CIFS mount or local SSD is recommended.", flush=True)
+        if text.startswith("/mnt/tank6124_sharefolders"):
+            print(f"{prefix} CIFS NAS path detected: {path}", flush=True)
+
+
+def split_files(
+    h5_files: list[Path],
+    *,
+    val_ratio: float,
+    split_seed: int,
+    split_by: str,
+) -> tuple[list[Path], list[Path], dict[str, Any]]:
+    if len(h5_files) < 2:
+        raise ValueError(f"Need at least 2 HDF5 files for train/val split, got {len(h5_files)}")
+    if not (0.0 < val_ratio < 1.0):
+        raise ValueError(f"val_ratio must be in (0, 1), got {val_ratio}")
+    if split_by == "bag_name":
+        print("[BFM offline train][warn] split_by=bag_name requires metadata scan; streaming/eager file pre-split will use file-level split.", flush=True)
+    files = list(h5_files)
+    rng = random.Random(split_seed)
+    rng.shuffle(files)
+    val_count = max(1, int(math.ceil(len(files) * val_ratio)))
+    val_files = sorted(files[:val_count], key=lambda p: str(p))
+    train_files = sorted(files[val_count:], key=lambda p: str(p))
+    if not train_files:
+        raise RuntimeError("Split produced empty train file set. Reduce val_ratio or increase max_files.")
+    split_info = {
+        "split_seed": split_seed,
+        "split_by": f"{split_by}_preload_file_split",
+        "val_ratio": val_ratio,
+        "num_episodes_total": len(h5_files),
+        "num_episodes_train": len(train_files),
+        "num_episodes_val": len(val_files),
+        "intersection_count": 0,
+        "num_files_train": len(train_files),
+        "num_files_val": len(val_files),
+    }
+    return train_files, val_files, split_info
+
+
+def create_streaming_loader(dataset: HDF5StreamingDataset, args: argparse.Namespace, *, shuffle: bool) -> DataLoader:
+    kwargs: dict[str, Any] = {
+        "batch_size": int(args.batch_size),
+        "shuffle": shuffle,
+        "num_workers": int(args.num_workers),
+        "pin_memory": bool(args.pin_memory),
+        "drop_last": True,
+    }
+    if int(args.num_workers) > 0:
+        kwargs["persistent_workers"] = bool(args.persistent_workers)
+        if args.prefetch_factor is not None:
+            kwargs["prefetch_factor"] = int(args.prefetch_factor)
+    elif args.persistent_workers:
+        print("[BFM offline train][warn] --persistent_workers ignored because --num_workers=0", flush=True)
+    return DataLoader(dataset, **kwargs)
+
+
+def amp_dtype_from_arg(name: str) -> torch.dtype:
+    return torch.bfloat16 if name == "bf16" else torch.float16
+
 def _prepare_eval_batch(agent: FBCPRAgent, batch: dict[str, Any]) -> dict[str, Any]:
     # Reuse the exact same shaping/device logic as in training.
     return agent._prepare_batch_for_model(batch)  # noqa: SLF001 (intentional for consistency)
@@ -265,8 +356,9 @@ def evaluate(
     }
 
     num = max(1, int(val_num_batches))
+    start = perf_counter()
     with torch.no_grad():
-        for _ in range(num):
+        for i in range(num):
             if seq_len > 1:
                 batch = val_buffer.sample_sequences(batch_size=batch_size, seq_len=seq_len, device=buffer_device)
             else:
@@ -287,9 +379,63 @@ def evaluate(
 
             total["val_mse_hand"] += float(torch.mean((pred_hand - tgt_hand) ** 2).item())
             total["val_mae_hand"] += float(torch.mean(torch.abs(pred_hand - tgt_hand)).item())
+            if (i + 1) == num or (i + 1) % max(1, num // 4) == 0:
+                print(f"[BFM offline train][val] progress={(i + 1) / num * 100:.0f}% batches={i + 1}/{num}", flush=True)
 
+    print(f"[BFM offline train][val] finished batches={num} elapsed={perf_counter() - start:.2f}s", flush=True)
     return {k: v / num for k, v in total.items()}
 
+
+
+def evaluate_loader(
+    agent: FBCPRAgent,
+    val_loader: DataLoader,
+    *,
+    val_num_batches: int,
+    non_blocking: bool,
+    amp: bool,
+    amp_dtype: torch.dtype,
+) -> dict[str, float]:
+    agent.eval()
+    total = {
+        "val_mse_full": 0.0,
+        "val_mae_full": 0.0,
+        "val_mse_arm": 0.0,
+        "val_mae_arm": 0.0,
+        "val_mse_hand": 0.0,
+        "val_mae_hand": 0.0,
+    }
+    num = max(1, int(val_num_batches))
+    iterator = iter(val_loader)
+    start = perf_counter()
+    with torch.no_grad():
+        for i in range(num):
+            try:
+                batch = next(iterator)
+            except StopIteration:
+                iterator = iter(val_loader)
+                batch = next(iterator)
+            model_batch = agent._prepare_batch_for_model(batch, non_blocking=non_blocking)  # noqa: SLF001
+            context = (
+                torch.autocast(device_type=agent.device.type, dtype=amp_dtype, enabled=True)
+                if amp and agent.device.type in {"cuda", "cpu"}
+                else torch.no_grad()
+            )
+            with context:
+                pred = agent.model(model_batch)
+            tgt = model_batch["action"]["full"]
+            pred_arm, pred_hand = pred[:, :14], pred[:, 14:]
+            tgt_arm, tgt_hand = tgt[:, :14], tgt[:, 14:]
+            total["val_mse_full"] += float(torch.mean((pred - tgt) ** 2).item())
+            total["val_mae_full"] += float(torch.mean(torch.abs(pred - tgt)).item())
+            total["val_mse_arm"] += float(torch.mean((pred_arm - tgt_arm) ** 2).item())
+            total["val_mae_arm"] += float(torch.mean(torch.abs(pred_arm - tgt_arm)).item())
+            total["val_mse_hand"] += float(torch.mean((pred_hand - tgt_hand) ** 2).item())
+            total["val_mae_hand"] += float(torch.mean(torch.abs(pred_hand - tgt_hand)).item())
+            if (i + 1) == num or (i + 1) % max(1, num // 4) == 0:
+                print(f"[BFM offline train][val] progress={(i + 1) / num * 100:.0f}% batches={i + 1}/{num}", flush=True)
+    print(f"[BFM offline train][val] finished batches={num} elapsed={perf_counter() - start:.2f}s", flush=True)
+    return {k: v / num for k, v in total.items()}
 
 def checkpoint_paths(save_path: str) -> tuple[Path, Path, Path]:
     p = Path(save_path).expanduser().resolve()
@@ -346,8 +492,17 @@ def main() -> None:
     buffer_device, model_device = resolve_devices(args)
 
     data_paths = [Path(p).expanduser().resolve() for p in args.data]
+    warn_about_path(data_paths)
+
+    discovery_start = perf_counter()
+    print("[BFM offline train] dataset discovery starting...", flush=True)
     discovered_h5_files = discover_h5_files(data_paths, recursive=args.recursive)
     h5_files = limit_h5_files(discovered_h5_files, max_files=args.max_files)
+    print(
+        f"[BFM offline train] dataset discovery finished: discovered={len(discovered_h5_files)} "
+        f"selected={len(h5_files)} elapsed={perf_counter() - discovery_start:.2f}s",
+        flush=True,
+    )
 
     print_h5_dataset_summary(
         data_roots=data_paths,
@@ -356,46 +511,89 @@ def main() -> None:
         selected_h5_files=h5_files,
         max_files=args.max_files,
     )
-    if any("/gvfs/" in str(path) for path in data_paths):
-        print(
-            "[BFM offline train][warn] GVFS path detected. HDF5 reads over GVFS/SMB can be slow; "
-            "if loading stalls here, copy the selected .h5 files to a local SSD and run --data on that local folder.",
-            flush=True,
-        )
 
-    print("[BFM offline train] building full offline buffer from selected HDF5 files...", flush=True)
-    full_buffer = build_buffer_from_files(
-        h5_files,
-        buffer_device=buffer_device,
-        seed=args.split_seed,
-        use_images=True,
-        use_text=True,
-        log_prefix="[BFM offline train][hdf5]",
-    )
-    print(
-        f"[BFM offline train] full buffer ready: episodes={full_buffer.num_episodes()} "
-        f"frames={full_buffer.total_num_steps()} transitions={len(full_buffer)}",
-        flush=True,
-    )
-
-    train_ids, val_ids, split_info = split_episode_ids(
-        full_buffer,
+    train_files, val_files, split_info = split_files(
         h5_files,
         val_ratio=args.val_ratio,
         split_seed=args.split_seed,
         split_by=args.split_by,
     )
-
-    print("[BFM offline train] building train/validation buffers...", flush=True)
-    train_buffer = build_sub_buffer(full_buffer, train_ids, buffer_device=buffer_device, seed=args.split_seed)
-    val_buffer = build_sub_buffer(full_buffer, val_ids, buffer_device=buffer_device, seed=args.split_seed + 1)
     print(
-        f"[BFM offline train] train buffer: episodes={train_buffer.num_episodes()} "
-        f"frames={train_buffer.total_num_steps()} transitions={len(train_buffer)}; "
-        f"val buffer: episodes={val_buffer.num_episodes()} frames={val_buffer.total_num_steps()} "
-        f"transitions={len(val_buffer)}",
+        "[BFM offline train] split before loading: "
+        f"mode={args.data_loading} train_files={len(train_files)} val_files={len(val_files)} "
+        f"seed={split_info['split_seed']} val_ratio={split_info['val_ratio']:.3f}",
         flush=True,
     )
+
+    train_buffer = None
+    val_buffer = None
+    train_loader = None
+    val_loader = None
+    train_iter = None
+
+    if args.data_loading == "streaming":
+        print(
+            "[BFM offline train] data loading mode: streaming (no full OfflineTrajectoryBuffer preload)",
+            flush=True,
+        )
+        if str(buffer_device) != "cpu":
+            print("[BFM offline train][warn] buffer_device is ignored in streaming mode; DataLoader batches stay on CPU until update().", flush=True)
+        train_dataset = HDF5StreamingDataset(
+            train_files,
+            use_images=args.use_images,
+            cameras=args.cameras,
+            image_size=args.image_size,
+            frame_stride=args.frame_stride,
+            seq_len=args.seq_len,
+            log_prefix="[BFM offline train][streaming][train]",
+        )
+        val_dataset = HDF5StreamingDataset(
+            val_files,
+            use_images=args.use_images,
+            cameras=args.cameras,
+            image_size=args.image_size,
+            frame_stride=args.frame_stride,
+            seq_len=args.seq_len,
+            log_prefix="[BFM offline train][streaming][val]",
+        )
+        train_loader = create_streaming_loader(train_dataset, args, shuffle=True)
+        val_loader = create_streaming_loader(val_dataset, args, shuffle=True)
+        train_iter = cycle(train_loader)
+        print(
+            f"[BFM offline train] streaming loaders ready: train_samples={len(train_dataset)} "
+            f"val_samples={len(val_dataset)} batch_size={args.batch_size} num_workers={args.num_workers} "
+            f"pin_memory={args.pin_memory} persistent_workers={args.persistent_workers} prefetch_factor={args.prefetch_factor}",
+            flush=True,
+        )
+    else:
+        print("[BFM offline train] data loading mode: eager (preload split buffers into RAM)", flush=True)
+        print(
+            "[BFM offline train][eager] estimated memory: real RAM usage roughly equals raw selected tensors "
+            "plus PyTorch/object overhead; use scripts/data/inspect_hdf5_dataset.py for a dataset-specific estimate.",
+            flush=True,
+        )
+        train_buffer = build_buffer_from_files(
+            train_files,
+            buffer_device=buffer_device,
+            seed=args.split_seed,
+            use_images=args.use_images,
+            use_text=True,
+            log_prefix="[BFM offline train][hdf5][train]",
+        )
+        val_buffer = build_buffer_from_files(
+            val_files,
+            buffer_device=buffer_device,
+            seed=args.split_seed + 1,
+            use_images=args.use_images,
+            use_text=True,
+            log_prefix="[BFM offline train][hdf5][val]",
+        )
+        print(
+            f"[BFM offline train] eager buffers ready: train episodes={train_buffer.num_episodes()} "
+            f"frames={train_buffer.total_num_steps()} transitions={len(train_buffer)}; "
+            f"val episodes={val_buffer.num_episodes()} frames={val_buffer.total_num_steps()} transitions={len(val_buffer)}",
+            flush=True,
+        )
 
     print(
         "[BFM offline train] split "
@@ -446,17 +644,24 @@ def main() -> None:
         f"batch_size={args.batch_size} seq_len={args.seq_len}",
         flush=True,
     )
-    print(f"[BFM offline train] buffer_device={buffer_device} model_device={model_device}", flush=True)
+    amp_dtype = amp_dtype_from_arg(args.amp_dtype)
+    non_blocking = bool(args.pin_memory) and torch.device(model_device).type == "cuda"
+    print(f"[BFM offline train] buffer_device={buffer_device} model_device={model_device} amp={args.amp} amp_dtype={args.amp_dtype} non_blocking={non_blocking}", flush=True)
 
     for step in range(start_step, int(args.updates) + 1):
         if step == start_step or step % int(args.print_every) == 0:
             print(f"[BFM offline train] update start step={step}", flush=True)
-        if args.seq_len > 1:
-            batch = train_buffer.sample_sequences(batch_size=args.batch_size, seq_len=args.seq_len, device=buffer_device)
+        if args.data_loading == "streaming":
+            assert train_iter is not None
+            batch = next(train_iter)
         else:
-            batch = train_buffer.sample_transitions(batch_size=args.batch_size, device=buffer_device)
+            assert train_buffer is not None
+            if args.seq_len > 1:
+                batch = train_buffer.sample_sequences(batch_size=args.batch_size, seq_len=args.seq_len, device=buffer_device)
+            else:
+                batch = train_buffer.sample_transitions(batch_size=args.batch_size, device=buffer_device)
 
-        train_metrics = agent.update(batch)
+        train_metrics = agent.update(batch, non_blocking=non_blocking, amp=args.amp, amp_dtype=amp_dtype)
         if tb_writer is not None:
             tb_writer.add_scalar("train/loss", float(train_metrics["loss"]), step)
             tb_writer.add_scalar("train/action_mae", float(train_metrics["action_mae"]), step)
@@ -466,14 +671,26 @@ def main() -> None:
         run_eval = (step == start_step) or (step % int(args.eval_every) == 0) or (step == int(args.updates))
 
         if run_eval:
-            val_metrics = evaluate(
-                agent,
-                val_buffer,
-                batch_size=args.batch_size,
-                seq_len=args.seq_len,
-                val_num_batches=args.val_num_batches,
-                buffer_device=buffer_device,
-            )
+            if args.data_loading == "streaming":
+                assert val_loader is not None
+                val_metrics = evaluate_loader(
+                    agent,
+                    val_loader,
+                    val_num_batches=args.val_num_batches,
+                    non_blocking=non_blocking,
+                    amp=args.amp,
+                    amp_dtype=amp_dtype,
+                )
+            else:
+                assert val_buffer is not None
+                val_metrics = evaluate(
+                    agent,
+                    val_buffer,
+                    batch_size=args.batch_size,
+                    seq_len=args.seq_len,
+                    val_num_batches=args.val_num_batches,
+                    buffer_device=buffer_device,
+                )
 
             score = float(val_metrics[args.best_metric])
             if tb_writer is not None:

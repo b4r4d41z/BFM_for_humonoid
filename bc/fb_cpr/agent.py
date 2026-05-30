@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+from contextlib import nullcontext
 from typing import Any
 
 import torch
@@ -76,13 +77,13 @@ class FBCPRAgent:
     def eval(self) -> None:
         self._model.eval()
 
-    def _to_device(self, x: Any) -> Any:
+    def _to_device(self, x: Any, *, non_blocking: bool = False) -> Any:
         if isinstance(x, dict):
-            return {k: self._to_device(v) for k, v in x.items()}
+            return {k: self._to_device(v, non_blocking=non_blocking) for k, v in x.items()}
         if isinstance(x, list):
-            return [self._to_device(v) for v in x]
+            return [self._to_device(v, non_blocking=non_blocking) for v in x]
         if isinstance(x, torch.Tensor):
-            return x.to(self.device)
+            return x.to(self.device, non_blocking=non_blocking)
         return x
 
     def _flatten_bt(self, x: torch.Tensor) -> torch.Tensor:
@@ -104,7 +105,7 @@ class FBCPRAgent:
             return F.smooth_l1_loss(pred, target)
         raise ValueError(f"Unsupported action_loss: {self.cfg.train.action_loss}")
 
-    def _prepare_batch_for_model(self, batch: dict[str, Any]) -> dict[str, Any]:
+    def _prepare_batch_for_model(self, batch: dict[str, Any], *, non_blocking: bool = False) -> dict[str, Any]:
         """
         Convert both transition and sequence batches to model-ready transition form.
 
@@ -116,7 +117,7 @@ class FBCPRAgent:
         Sequence batch contract:
           same keys with leading [B, T, ...] dims.
         """
-        batch = self._to_device(batch)
+        batch = self._to_device(batch, non_blocking=non_blocking)
 
         action_full = batch["action"]["full"]
         if not self._is_sequence_batch(action_full):
@@ -139,11 +140,18 @@ class FBCPRAgent:
         }
         return model_batch
 
-    def update(self, batch: dict[str, Any]) -> dict[str, float]:
+    def update(
+        self,
+        batch: dict[str, Any],
+        *,
+        non_blocking: bool = False,
+        amp: bool = False,
+        amp_dtype: torch.dtype = torch.bfloat16,
+    ) -> dict[str, float]:
         """One supervised offline BC update step."""
         self.train(True)
 
-        model_batch = self._prepare_batch_for_model(batch)
+        model_batch = self._prepare_batch_for_model(batch, non_blocking=non_blocking)
         target_action = model_batch["action"]["full"]
         if target_action.ndim != 2:
             raise ValueError(
@@ -154,8 +162,15 @@ class FBCPRAgent:
                 f"action.full last dim must be {self.model_cfg.action_dim}, got {int(target_action.shape[-1])}"
             )
 
-        pred_action = self._model(model_batch)
-        loss = self._compute_action_loss(pred_action, target_action)
+        autocast_enabled = bool(amp) and self.device.type in {"cuda", "cpu"}
+        autocast_context = (
+            torch.autocast(device_type=self.device.type, dtype=amp_dtype, enabled=True)
+            if autocast_enabled
+            else nullcontext()
+        )
+        with autocast_context:
+            pred_action = self._model(model_batch)
+            loss = self._compute_action_loss(pred_action, target_action)
 
         self._optimizer.zero_grad(set_to_none=True)
         loss.backward()

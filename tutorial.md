@@ -1,5 +1,16 @@
 # Stating Offline training | Behavioral Cloning
 
+## Recommended NAS HDF5 path
+
+Use the CIFS mount for NAS training:
+
+```bash
+NAS_H5="/mnt/tank6124_sharefolders/Datasets/BFM_dataset/hdf5"
+```
+
+Avoid using `/run/user/1000/gvfs/...` as the recommended HDF5 path; GVFS SMB can be slow and unstable for DataLoader/HDF5 workloads.
+
+
 1. inside terminal launch tensorboard and training
 
 ```bash
