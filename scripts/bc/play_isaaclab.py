@@ -26,6 +26,11 @@ from isaaclab_wrapper.sanity_checks import (
 from bc.data import schema as data_schema
 
 
+_DEFAULT_ARM_MAPPING_FILE = (
+    Path(__file__).resolve().parents[2] / "configs" / "robot_mappings" / "kuavo_real_to_isaac_arm14.json"
+)
+
+
 def _extract_checkpoint_joint_names(meta: dict[str, Any]) -> list[str]:
     candidate_keys = ("joint_names", "meta_joint_names", "action_joint_names", "obs_joint_names")
     for key in candidate_keys:
@@ -52,7 +57,7 @@ def _load_joint_names_from_mapping_file(mapping_path: str) -> list[str]:
         payload = yaml.safe_load(text)
 
     if isinstance(payload, dict):
-        for key in ("joint_names", "model_action_joint_names", "arm_joint_names"):
+        for key in ("model_arm_joint_names", "joint_names", "model_action_joint_names", "arm_joint_names"):
             value = payload.get(key)
             if isinstance(value, list) and value:
                 return [str(x) for x in value]
@@ -173,8 +178,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--action_mode", type=str, default="identity", choices=("arm_only", "arm_plus_gripper_bridge", "identity"))
     parser.add_argument("--action_joint_source", type=str, default="checkpoint_meta", choices=("checkpoint_meta", "mapping_file"))
-    parser.add_argument("--action_mapping_file", type=str, default=None, help="Path to JSON/YAML with model action joint names")
-    parser.add_argument("--allow_provisional_mapping", action="store_true", help="Allow fallback [0:14] mapping when exact name match is unavailable")
+    parser.add_argument(
+        "--action_mapping_file",
+        type=str,
+        default=str(_DEFAULT_ARM_MAPPING_FILE),
+        help="Path to the required JSON arm joint mapping file",
+    )
+    parser.add_argument(
+        "--allow_provisional_mapping",
+        action="store_true",
+        help="Deprecated/disabled: unverified fallback [0:14] mapping is not allowed for policy execution",
+    )
     parser.add_argument("--joint_name_normalization", type=str, default="strict", choices=("strict", "strip_lower"))
     parser.add_argument("--gripper_bridge_aggregator", type=str, default="prototype_distance", choices=("prototype_distance",))
     parser.add_argument("--gripper_open_threshold", type=float, default=0.35, help="closure score threshold to open (<=)")
@@ -293,6 +307,7 @@ def main() -> None:
             model_action_joint_names=normalized_model_joint_names,
             env_ctrl_joint_names=normalized_env_joint_names,
             allow_schema_fallback=args.allow_provisional_mapping,
+            arm_mapping_file=args.action_mapping_file,
             gripper_bridge_aggregator=args.gripper_bridge_aggregator,
             gripper_open_threshold=args.gripper_open_threshold,
             gripper_close_threshold=args.gripper_close_threshold,
@@ -306,11 +321,14 @@ def main() -> None:
         env_cfg = getattr(unwrapped_env, "cfg", None)
         env_action_space = getattr(env_cfg, "action_space", None)
         env_observation_space = getattr(env_cfg, "observation_space", None)
-        mapping_status = _compare_joint_orders(normalized_model_joint_names, normalized_env_joint_names)
-        verification_status = "verified" if mapping_status == "exact_match" else "provisional"
+        mapping_status = getattr(act_adapter, "_mapping_status", "not_required")
+        verification_status = mapping_status
+        model_arm_joint_names = act_adapter._resolve_model_arm_joint_names()
+        arm_action_index_map = list(getattr(act_adapter, "_arm_index_map", []))
         notes = (
             "Dataset schema defines split arm=[0:14], hand=[14:26]. "
-            "If checkpoint joint names are absent or mismatched, arm mapping remains provisional."
+            "Arm policy targets are reordered only through the verified mapping file; "
+            "unverified schema_fallback_[0:14] is disabled."
         )
 
         print("[play_isaaclab] ===== CONTRACT: model dims =====")
@@ -322,15 +340,17 @@ def main() -> None:
         print("[play_isaaclab] ===== CONTRACT: model action channel order source =====")
         print(
             "[play_isaaclab] dataset schema split: arm=[0:14], hand=[14:26], "
-            f"checkpoint_joint_names_status={mapping_status}, verification={verification_status}"
+            f"mapping_status={mapping_status}, verification={verification_status}"
         )
-        if verification_status != "verified":
-            print(f"[play_isaaclab][WARNING] action mapping is provisional. {notes}")
-            if not args.allow_provisional_mapping:
-                raise RuntimeError(
-                    "Mapping is not exact_match and provisional mapping is disabled. "
-                    "Provide a verified joint mapping source or pass --allow_provisional_mapping."
-                )
+        print(f"[play_isaaclab] mapping_status={verification_status}")
+        print(f"[play_isaaclab] model_arm_joint_names={model_arm_joint_names}")
+        print(f"[play_isaaclab] isaac_ctrl_joint_names={normalized_env_joint_names}")
+        print(f"[play_isaaclab] arm_action_index_map={arm_action_index_map}")
+        if args.action_mode in ("arm_only", "arm_plus_gripper_bridge") and verification_status != "verified":
+            raise RuntimeError(
+                "Arm joint mapping verification failed for IsaacLab policy execution. "
+                f"mapping_status={verification_status}; action_mapping_file={args.action_mapping_file}"
+            )
 
         project_contract = data_schema.validate_contract_metadata(
             data_schema.get_default_contract_metadata(), strict=True
@@ -374,9 +394,12 @@ def main() -> None:
                     "arm": [0, data_schema.ACTION_ARM_DIM],
                     "hand": [data_schema.ACTION_ARM_DIM, data_schema.ACTION_FULL_DIM],
                 },
-                "checkpoint_joint_names_status": mapping_status,
+                "checkpoint_joint_names_status": _compare_joint_orders(normalized_model_joint_names, normalized_env_joint_names),
                 "mapping_status": verification_status,
                 "checkpoint_joint_names": checkpoint_joint_names,
+                "model_arm_joint_names": model_arm_joint_names,
+                "isaac_ctrl_joint_names": normalized_env_joint_names,
+                "arm_action_index_map": arm_action_index_map,
                 "action_joint_source": args.action_joint_source,
                 "action_mapping_file": args.action_mapping_file,
                 "joint_name_normalization": args.joint_name_normalization,
