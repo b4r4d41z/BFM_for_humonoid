@@ -14,6 +14,7 @@ from .schema import (
     ACTION_HAND_DIM,
     IMAGE_KEYS,
     PATHS,
+    fill_and_validate_contract_metadata,
     STATE_FULL_DIM,
     get_image_path,
     split_action_vector,
@@ -62,8 +63,17 @@ class HDF5DataStreamLoader(Dataset):
                 "instruction": ...,
                 "bag_name": ...,
                 "joint_names": ...,
+                "arm_joint_names": ...,
+                "hand_value_names": ...,
                 "obs_dim": ...,
                 "act_dim": ...,
+                "action_dim": ...,
+                "action_type": ...,
+                "gripper_mode": ...,
+                "state_layout": ...,
+                "action_layout": ...,
+                "hand_open_prototype_6": ...,
+                "hand_closed_prototype_6": ...,
                 "state_definition": ...,
             }
         }
@@ -82,6 +92,10 @@ class HDF5DataStreamLoader(Dataset):
 
         with h5py.File(self.hdf5_path, "r") as f:
             self._validate_structure(f)
+            raw_meta = self._read_contract_meta_from_file(f)
+            fill_and_validate_contract_metadata(
+                raw_meta, context=f"{self.hdf5_path}/meta", warn=True
+            )
             self.length = int(f[PATHS.done].shape[0])
 
     def __len__(self) -> int:
@@ -104,8 +118,6 @@ class HDF5DataStreamLoader(Dataset):
             PATHS.act_hand_target,
             PATHS.act_action,
             PATHS.done,
-            PATHS.meta_obs_dim,
-            PATHS.meta_act_dim,
         ]
 
         if self.use_images:
@@ -201,20 +213,74 @@ class HDF5DataStreamLoader(Dataset):
             return None
         return self._decode_scalar(f[path][()])
 
-    def _read_optional_string_list_dataset(self, f: h5py.File, path: str) -> list[str] | None:
+    def _read_optional_list_dataset(self, f: h5py.File, path: str) -> list[Any] | None:
         if path not in f:
             return None
 
         raw = np.asarray(f[path][()])
-        items: list[str] = []
-
-        for item in raw:
+        if raw.shape == ():
+            raw = raw.reshape(1)
+        items: list[Any] = []
+        for item in raw.tolist():
             if isinstance(item, bytes):
                 items.append(item.decode("utf-8"))
             else:
-                items.append(str(item))
-
+                items.append(item)
         return items
+
+    def _read_optional_string_list_dataset(self, f: h5py.File, path: str) -> list[str] | None:
+        items = self._read_optional_list_dataset(f, path)
+        if items is None:
+            return None
+        return [str(item) for item in items]
+
+    def _read_contract_meta_from_file(self, f: h5py.File) -> dict[str, Any]:
+        meta: dict[str, Any] = {}
+
+        for key, path, caster in (
+            ("obs_dim", PATHS.meta_obs_dim, int),
+            ("act_dim", PATHS.meta_act_dim, int),
+            ("action_dim", PATHS.meta_action_dim, int),
+        ):
+            value = self._read_optional_scalar_dataset(f, path)
+            if value is not None:
+                meta[key] = caster(np.asarray(value).reshape(-1)[0])
+
+        # Optional strings
+        for key, path in (
+            ("bag_name", PATHS.meta_bag_name),
+            ("state_definition", PATHS.meta_state_definition),
+            ("action_type", PATHS.meta_action_type),
+            ("gripper_mode", PATHS.meta_gripper_mode),
+            ("state_layout", PATHS.meta_state_layout),
+            ("action_layout", PATHS.meta_action_layout),
+        ):
+            value = self._read_optional_scalar_dataset(f, path)
+            if value is not None:
+                meta[key] = str(value)
+
+        instruction = self._read_optional_scalar_dataset(f, PATHS.meta_instruction)
+        if instruction is not None:
+            meta["instruction"] = str(instruction) if self.use_text else ""
+
+        joint_names = self._read_optional_string_list_dataset(f, PATHS.meta_joint_names)
+        if joint_names is not None:
+            meta["joint_names"] = joint_names
+            meta["arm_joint_names"] = joint_names
+
+        hand_value_names = self._read_optional_string_list_dataset(f, PATHS.meta_hand_value_names)
+        if hand_value_names is not None:
+            meta["hand_value_names"] = hand_value_names
+
+        for key, path in (
+            ("hand_open_prototype_6", PATHS.meta_hand_open_prototype_6),
+            ("hand_closed_prototype_6", PATHS.meta_hand_closed_prototype_6),
+        ):
+            value = self._read_optional_list_dataset(f, path)
+            if value is not None:
+                meta[key] = value
+
+        return meta
 
     def _load_meta_once(self) -> dict[str, Any]:
         """
@@ -224,32 +290,13 @@ class HDF5DataStreamLoader(Dataset):
             return self._meta_cache
 
         f = self._get_h5()
-
-        meta: dict[str, Any] = {}
-
-        # Required dims
-        obs_dim_raw = np.asarray(f[PATHS.meta_obs_dim][()]).reshape(-1)[0]
-        act_dim_raw = np.asarray(f[PATHS.meta_act_dim][()]).reshape(-1)[0]
-
-        meta["obs_dim"] = int(obs_dim_raw)
-        meta["act_dim"] = int(act_dim_raw)
-
-        # Optional strings
-        bag_name = self._read_optional_scalar_dataset(f, PATHS.meta_bag_name)
-        if bag_name is not None:
-            meta["bag_name"] = str(bag_name)
-
-        instruction = self._read_optional_scalar_dataset(f, PATHS.meta_instruction)
-        if instruction is not None:
-            meta["instruction"] = str(instruction) if self.use_text else ""
-
-        state_definition = self._read_optional_scalar_dataset(f, PATHS.meta_state_definition)
-        if state_definition is not None:
-            meta["state_definition"] = str(state_definition)
-
-        joint_names = self._read_optional_string_list_dataset(f, PATHS.meta_joint_names)
-        if joint_names is not None:
-            meta["joint_names"] = joint_names
+        raw_meta = self._read_contract_meta_from_file(f)
+        meta, warnings = fill_and_validate_contract_metadata(
+            raw_meta, context=f"{self.hdf5_path}/meta", warn=True
+        )
+        meta["metadata_exists"] = bool("meta" in f)
+        meta["metadata_source"] = "file" if not warnings else "file_with_defaults"
+        meta["metadata_defaulted_fields"] = [msg.split(": missing ", 1)[1].split(";", 1)[0] for msg in warnings]
 
         self._meta_cache = meta
         return self._meta_cache

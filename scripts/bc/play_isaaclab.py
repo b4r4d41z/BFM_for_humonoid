@@ -104,6 +104,17 @@ def _write_contract_report(report: dict[str, Any], output_dir: str) -> None:
         f"- task: {report['task']}",
         f"- checkpoint: {report['checkpoint']}",
         "",
+        "## Project 26D data/model contract",
+        f"- compatible: {report['project_contract']['compatible']}",
+        f"- state_layout: {report['project_contract']['state_layout']}",
+        f"- action_layout: {report['project_contract']['action_layout']}",
+        f"- action_type: {report['project_contract']['action_type']}",
+        f"- gripper_mode: {report['project_contract']['gripper_mode']}",
+        f"- hand_open_prototype_6: {report['project_contract']['hand_open_prototype_6']}",
+        f"- hand_closed_prototype_6: {report['project_contract']['hand_closed_prototype_6']}",
+        f"- left_hand_slice: {report['project_contract']['left_hand_slice']}",
+        f"- right_hand_slice: {report['project_contract']['right_hand_slice']}",
+        "",
         "## Dimensions",
         f"- model_obs_dim: {report['dims']['model_obs_dim']}",
         f"- model_action_dim: {report['dims']['model_action_dim']}",
@@ -168,8 +179,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gripper_bridge_aggregator", type=str, default="prototype_distance", choices=("prototype_distance",))
     parser.add_argument("--gripper_open_threshold", type=float, default=0.35, help="closure score threshold to open (<=)")
     parser.add_argument("--gripper_close_threshold", type=float, default=0.65, help="closure score threshold to close (>=)")
-    parser.add_argument("--gripper_open_prototype", type=float, nargs=6, default=[0.0, 100.0, 0.0, 0.0, 0.0, 0.0])
-    parser.add_argument("--gripper_closed_prototype", type=float, nargs=6, default=[69.0, 99.0, 42.0, 44.0, 61.0, 60.0])
+    parser.add_argument("--gripper_open_prototype", type=float, nargs=6, default=[float(x) for x in data_schema.HAND_OPEN_PROTOTYPE_6])
+    parser.add_argument("--gripper_closed_prototype", type=float, nargs=6, default=[float(x) for x in data_schema.HAND_CLOSED_PROTOTYPE_6])
     return parser
 
 
@@ -321,10 +332,36 @@ def main() -> None:
                     "Provide a verified joint mapping source or pass --allow_provisional_mapping."
                 )
 
+        project_contract = data_schema.validate_contract_metadata(
+            data_schema.get_default_contract_metadata(), strict=True
+        )
+        contract_compatible = (
+            expected_obs_dim in (None, project_contract["obs_dim"])
+            and expected_action_dim in (None, project_contract["action_dim"])
+        )
+
         report = {
             "generated_utc": datetime.now(timezone.utc).isoformat(),
             "task": args.task,
             "checkpoint": args.checkpoint,
+            "project_contract": {
+                "compatible": contract_compatible,
+                "obs_dim": project_contract["obs_dim"],
+                "action_dim": project_contract["action_dim"],
+                "arm_dim": project_contract["arm_dim"],
+                "hand_dim": project_contract["hand_dim"],
+                "arm_joint_names": project_contract["arm_joint_names"],
+                "hand_value_names": project_contract["hand_value_names"],
+                "state_layout": project_contract["state_layout"],
+                "action_layout": project_contract["action_layout"],
+                "action_type": project_contract["action_type"],
+                "gripper_mode": project_contract["gripper_mode"],
+                "hand_open_prototype_6": project_contract["hand_open_prototype_6"],
+                "hand_closed_prototype_6": project_contract["hand_closed_prototype_6"],
+                "left_hand_slice": project_contract["left_hand_slice"],
+                "right_hand_slice": project_contract["right_hand_slice"],
+                "image_keys": project_contract["image_keys"],
+            },
             "dims": {
                 "model_obs_dim": expected_obs_dim,
                 "model_action_dim": expected_action_dim,

@@ -16,6 +16,7 @@ from ..data.schema import (
     STATE_ARM_DIM,
     STATE_FULL_DIM,
     STATE_HAND_DIM,
+    fill_and_validate_contract_metadata,
 )
 from ..data.stream_loader import HDF5DataStreamLoader
 
@@ -407,7 +408,10 @@ class OfflineTrajectoryBuffer:
             meta_obj = _nested_get(episode, ["meta"])
             if not isinstance(meta_obj, dict):
                 raise TypeError(f"meta must be dict, got {type(meta_obj).__name__}")
-            prepared["meta"] = _copy_meta(meta_obj)
+            contract_meta, _ = fill_and_validate_contract_metadata(
+                meta_obj, context="OfflineTrajectoryBuffer episode/meta", warn=True
+            )
+            prepared["meta"] = _copy_meta(contract_meta)
 
         if self.has_images is None:
             self.has_images = has_images

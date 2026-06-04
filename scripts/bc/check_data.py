@@ -38,6 +38,8 @@ from bc.data.schema import (
     STATE_ARM_DIM,
     STATE_FULL_DIM,
     STATE_HAND_DIM,
+    get_default_contract_metadata,
+    fill_and_validate_contract_metadata,
 )
 
 
@@ -51,8 +53,6 @@ REQUIRED_H5_PATHS = [
     "images/head",
     "images/left_wrist",
     "images/right_wrist",
-    "meta/act_dim",
-    "meta/obs_dim",
 ]
 
 OPTIONAL_H5_PATHS = [
@@ -60,6 +60,16 @@ OPTIONAL_H5_PATHS = [
     "meta/instruction",
     "meta/bag_name",
     "meta/state_definition",
+    "meta/obs_dim",
+    "meta/act_dim",
+    "meta/action_dim",
+    "meta/hand_value_names",
+    "meta/action_type",
+    "meta/gripper_mode",
+    "meta/state_layout",
+    "meta/action_layout",
+    "meta/hand_open_prototype_6",
+    "meta/hand_closed_prototype_6",
     "reward",
 ]
 
@@ -102,9 +112,20 @@ META_OPTIONAL_KEYS = {
     "instruction": "string",
     "bag_name": "string",
     "joint_names": "string_array",
+    "arm_joint_names": "string_array",
+    "hand_value_names": "string_array",
     "obs_dim": "scalar",
     "act_dim": "scalar",
+    "action_dim": "scalar",
     "state_definition": "string",
+    "action_type": "string",
+    "gripper_mode": "string",
+    "state_layout": "string",
+    "action_layout": "string",
+    "hand_open_prototype_6": "numeric_array",
+    "hand_closed_prototype_6": "numeric_array",
+    "left_hand_slice": "numeric_array",
+    "right_hand_slice": "numeric_array",
 }
 
 
@@ -213,6 +234,48 @@ def read_scalar_from_h5(h5f: h5py.File, path: str) -> Any:
     if isinstance(value, np.ndarray) and value.shape == ():
         return value.item()
     return value
+
+
+def read_list_from_h5(h5f: h5py.File, path: str) -> list[Any]:
+    raw = np.asarray(h5f[path][()])
+    if raw.shape == ():
+        raw = raw.reshape(1)
+    out = []
+    for item in raw.tolist():
+        out.append(item.decode("utf-8") if isinstance(item, bytes) else item)
+    return out
+
+
+def read_contract_meta_from_h5(h5f: h5py.File) -> tuple[dict[str, Any], bool]:
+    paths = {
+        "obs_dim": "meta/obs_dim",
+        "act_dim": "meta/act_dim",
+        "action_dim": "meta/action_dim",
+        "joint_names": "meta/joint_names",
+        "arm_joint_names": "meta/joint_names",
+        "hand_value_names": "meta/hand_value_names",
+        "action_type": "meta/action_type",
+        "gripper_mode": "meta/gripper_mode",
+        "state_layout": "meta/state_layout",
+        "action_layout": "meta/action_layout",
+        "state_definition": "meta/state_definition",
+        "hand_open_prototype_6": "meta/hand_open_prototype_6",
+        "hand_closed_prototype_6": "meta/hand_closed_prototype_6",
+    }
+    meta: dict[str, Any] = {}
+    metadata_exists = "meta" in h5f
+    for key, path in paths.items():
+        if path not in h5f:
+            continue
+        if key in {"joint_names", "arm_joint_names", "hand_value_names"}:
+            meta[key] = [str(x) for x in read_list_from_h5(h5f, path)]
+        elif key in {"hand_open_prototype_6", "hand_closed_prototype_6"}:
+            meta[key] = read_list_from_h5(h5f, path)
+        elif key in {"obs_dim", "act_dim", "action_dim"}:
+            meta[key] = int(np.asarray(h5f[path][()]).reshape(-1)[0])
+        else:
+            meta[key] = str(read_scalar_from_h5(h5f, path))
+    return meta, metadata_exists
 
 
 def dataset_info_h5(h5f: h5py.File, path: str) -> dict[str, Any]:
@@ -435,9 +498,11 @@ def inspect_joint_names_value(value: Any, name: str) -> tuple[list[str], list[st
 
     meta["count"] = len(items)
 
-    if len(items) != ACTION_ARM_DIM:
+    expected_count = ACTION_HAND_DIM if "hand_value_names" in name else ACTION_ARM_DIM
+    label = "hand value names" if "hand_value_names" in name else "joint names"
+    if len(items) != expected_count:
         issues.append(
-            f"{name}: expected {ACTION_ARM_DIM} joint names, got {len(items)}"
+            f"{name}: expected {expected_count} {label}, got {len(items)}"
         )
 
     return issues, warnings, meta
@@ -470,6 +535,8 @@ def validate_sample_meta(sample: dict[str, Any], idx: int) -> tuple[list[str], l
             sub_issues, sub_warnings, sub_meta = inspect_scalar_value(value, name)
         elif kind == "string_array":
             sub_issues, sub_warnings, sub_meta = inspect_joint_names_value(value, name)
+        elif kind == "numeric_array":
+            sub_issues, sub_warnings, sub_meta = check_any_array(value, name)
         else:
             sub_issues, sub_warnings, sub_meta = [], [], {}
 
@@ -500,6 +567,31 @@ def validate_sample_meta(sample: dict[str, Any], idx: int) -> tuple[list[str], l
                         )
                 except Exception:
                     warnings.append(f"{name}: could not parse integer value")
+
+    if isinstance(meta_obj, dict):
+        try:
+            contract_meta, contract_warnings = fill_and_validate_contract_metadata(
+                meta_obj, context=f"dataset[{idx}]/meta", warn=False
+            )
+            warnings.extend(contract_warnings)
+            meta_report["contract"] = {
+                "compatible": True,
+                "metadata_exists": contract_meta.get("metadata_exists", True),
+                "metadata_source": contract_meta.get("metadata_source", "file"),
+                "metadata_defaulted_fields": contract_meta.get("metadata_defaulted_fields", []),
+                "arm_joint_order": contract_meta["arm_joint_names"],
+                "hand_value_order": contract_meta["hand_value_names"],
+                "action_type": contract_meta["action_type"],
+                "gripper_mode": contract_meta["gripper_mode"],
+                "state_layout": contract_meta["state_layout"],
+                "action_layout": contract_meta["action_layout"],
+                "hand_open_prototype_6": contract_meta["hand_open_prototype_6"],
+                "hand_closed_prototype_6": contract_meta["hand_closed_prototype_6"],
+                "left_hand_slice": contract_meta["left_hand_slice"],
+                "right_hand_slice": contract_meta["right_hand_slice"],
+            }
+        except Exception as e:
+            issues.append(f"dataset[{idx}]/meta contract incompatible: {e}")
 
     return issues, warnings, meta_report
 
@@ -622,6 +714,44 @@ def validate_h5_file(file_path: Path) -> dict[str, Any]:
                     result["issues"].append(
                         f"{path}: expected second dim {expected_dim}, got {ds.shape[1]}"
                     )
+
+        # Semantic project contract metadata checks. Missing fields are filled from
+        # the hard-coded 26D defaults with warnings; contradictory fields fail.
+        raw_contract_meta, metadata_exists = read_contract_meta_from_h5(h5f)
+        result["meta"]["metadata_exists"] = metadata_exists
+        try:
+            contract_meta, contract_warnings = fill_and_validate_contract_metadata(
+                raw_contract_meta, context=f"{file_path}/meta", warn=False
+            )
+            result["warnings"].extend(contract_warnings)
+            result["meta"].update(
+                {
+                    "contract_compatible": True,
+                    "metadata_source": "file" if not contract_warnings else "file_with_defaults",
+                    "metadata_defaulted_fields": [
+                        msg.split(": missing ", 1)[1].split(";", 1)[0]
+                        for msg in contract_warnings
+                    ],
+                    "obs_dim": contract_meta["obs_dim"],
+                    "act_dim": contract_meta["act_dim"],
+                    "action_dim": contract_meta["action_dim"],
+                    "arm_joint_order": contract_meta["arm_joint_names"],
+                    "hand_value_order": contract_meta["hand_value_names"],
+                    "action_type": contract_meta["action_type"],
+                    "gripper_mode": contract_meta["gripper_mode"],
+                    "state_layout": contract_meta["state_layout"],
+                    "action_layout": contract_meta["action_layout"],
+                    "state_definition": contract_meta.get("state_definition"),
+                    "hand_open_prototype_6": contract_meta["hand_open_prototype_6"],
+                    "hand_closed_prototype_6": contract_meta["hand_closed_prototype_6"],
+                    "left_hand_slice": contract_meta["left_hand_slice"],
+                    "right_hand_slice": contract_meta["right_hand_slice"],
+                    "image_keys": contract_meta["image_keys"],
+                }
+            )
+        except Exception as e:
+            result["meta"]["contract_compatible"] = False
+            result["issues"].append(f"Semantic contract metadata incompatible: {e}")
 
         # Meta checks
         try:
@@ -1117,6 +1247,20 @@ def main() -> None:
         print(f"Final status   : {final_status}")
         print(f"Issues         : {len(combined_issues)}")
         print(f"Warnings       : {len(combined_warnings)}")
+        contract_meta = h5_result.get("meta", {})
+        print(f"Metadata exists: {contract_meta.get('metadata_exists')}")
+        print(f"Metadata source: {contract_meta.get('metadata_source')}")
+        print(f"Contract OK    : {contract_meta.get('contract_compatible')}")
+        print(f"Arm order      : {contract_meta.get('arm_joint_order')}")
+        print(f"Hand order     : {contract_meta.get('hand_value_order')}")
+        print(f"Action type    : {contract_meta.get('action_type')}")
+        print(f"Gripper mode   : {contract_meta.get('gripper_mode')}")
+        print(f"State layout   : {contract_meta.get('state_layout')}")
+        print(f"Action layout  : {contract_meta.get('action_layout')}")
+        print(f"Hand open      : {contract_meta.get('hand_open_prototype_6')}")
+        print(f"Hand closed    : {contract_meta.get('hand_closed_prototype_6')}")
+        print(f"Left slice     : {contract_meta.get('left_hand_slice')}")
+        print(f"Right slice    : {contract_meta.get('right_hand_slice')}")
 
         if combined_issues:
             print("Issue list:")
