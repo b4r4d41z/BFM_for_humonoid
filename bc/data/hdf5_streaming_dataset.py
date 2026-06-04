@@ -11,7 +11,18 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 
-from .schema import IMAGE_KEYS, PATHS, get_image_path, split_action_vector, split_state_vector
+from .schema import (
+    ACTION_ARM_DIM,
+    ACTION_FULL_DIM,
+    ACTION_HAND_DIM,
+    IMAGE_KEYS,
+    PATHS,
+    STATE_FULL_DIM,
+    fill_and_validate_contract_metadata,
+    get_image_path,
+    split_action_vector,
+    split_state_vector,
+)
 
 
 @dataclass(frozen=True)
@@ -140,6 +151,20 @@ class HDF5StreamingDataset(Dataset):
         for key in required:
             if hasattr(f[key], "shape") and int(f[key].shape[0]) != frames:
                 raise ValueError(f"{path}: length mismatch for {key}: expected {frames}, got {f[key].shape[0]}")
+
+        expected_dims = {
+            PATHS.obs_state: STATE_FULL_DIM,
+            PATHS.next_obs_state: STATE_FULL_DIM,
+            PATHS.act_action: ACTION_FULL_DIM,
+            PATHS.act_joint_target: ACTION_ARM_DIM,
+            PATHS.act_hand_target: ACTION_HAND_DIM,
+        }
+        for key, expected_dim in expected_dims.items():
+            if f[key].ndim != 2 or int(f[key].shape[1]) != expected_dim:
+                raise ValueError(f"{path}: {key} must have shape [N, {expected_dim}], got {tuple(f[key].shape)}")
+
+        raw_meta = self._read_contract_meta(f)
+        fill_and_validate_contract_metadata(raw_meta, context=f"{path}/meta", warn=True)
         return frames
 
     def _get_h5(self, file_id: int) -> h5py.File:
@@ -158,17 +183,59 @@ class HDF5StreamingDataset(Dataset):
             return x.decode("utf-8") if isinstance(x, bytes) else x
         return x
 
+    def _read_optional_list_dataset(self, f: h5py.File, path: str) -> list[Any] | None:
+        if path not in f:
+            return None
+        raw = np.asarray(f[path][()])
+        if raw.shape == ():
+            raw = raw.reshape(1)
+        items: list[Any] = []
+        for item in raw.tolist():
+            items.append(item.decode("utf-8") if isinstance(item, bytes) else item)
+        return items
+
+    def _read_contract_meta(self, f: h5py.File) -> dict[str, Any]:
+        meta: dict[str, Any] = {}
+        for name, path in (("obs_dim", PATHS.meta_obs_dim), ("act_dim", PATHS.meta_act_dim), ("action_dim", PATHS.meta_action_dim)):
+            if path in f:
+                meta[name] = int(np.asarray(f[path][()]).reshape(-1)[0])
+        for name, path in (
+            ("bag_name", PATHS.meta_bag_name),
+            ("state_definition", PATHS.meta_state_definition),
+            ("action_type", PATHS.meta_action_type),
+            ("gripper_mode", PATHS.meta_gripper_mode),
+            ("state_layout", PATHS.meta_state_layout),
+            ("action_layout", PATHS.meta_action_layout),
+        ):
+            if path in f:
+                meta[name] = str(self._decode_scalar(f[path][()]))
+        if self.use_text and PATHS.meta_instruction in f:
+            meta["instruction"] = str(self._decode_scalar(f[PATHS.meta_instruction][()]))
+        if PATHS.meta_joint_names in f:
+            names = [str(x) for x in self._read_optional_list_dataset(f, PATHS.meta_joint_names) or []]
+            meta["joint_names"] = names
+            meta["arm_joint_names"] = names
+        if PATHS.meta_hand_value_names in f:
+            meta["hand_value_names"] = [str(x) for x in self._read_optional_list_dataset(f, PATHS.meta_hand_value_names) or []]
+        for name, path in (
+            ("hand_open_prototype_6", PATHS.meta_hand_open_prototype_6),
+            ("hand_closed_prototype_6", PATHS.meta_hand_closed_prototype_6),
+        ):
+            values = self._read_optional_list_dataset(f, path)
+            if values is not None:
+                meta[name] = values
+        return meta
+
     def _load_meta_once(self, file_id: int, f: h5py.File) -> dict[str, Any]:
         if file_id in self._meta_cache:
             return self._meta_cache[file_id]
-        meta: dict[str, Any] = {}
-        for name, path in (("obs_dim", PATHS.meta_obs_dim), ("act_dim", PATHS.meta_act_dim)):
-            if path in f:
-                meta[name] = int(np.asarray(f[path][()]).reshape(-1)[0])
-        if PATHS.meta_bag_name in f:
-            meta["bag_name"] = str(self._decode_scalar(f[PATHS.meta_bag_name][()]))
-        if self.use_text and PATHS.meta_instruction in f:
-            meta["instruction"] = str(self._decode_scalar(f[PATHS.meta_instruction][()]))
+        raw_meta = self._read_contract_meta(f)
+        meta, warnings = fill_and_validate_contract_metadata(
+            raw_meta, context=f"{self.file_infos[file_id].path}/meta", warn=True
+        )
+        meta["metadata_exists"] = bool("meta" in f)
+        meta["metadata_source"] = "file" if not warnings else "file_with_defaults"
+        meta["metadata_defaulted_fields"] = [msg.split(": missing ", 1)[1].split(";", 1)[0] for msg in warnings]
         self._meta_cache[file_id] = meta
         return meta
 

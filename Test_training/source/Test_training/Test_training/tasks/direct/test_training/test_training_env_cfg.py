@@ -22,8 +22,8 @@ class TestTrainingEnvCfg(DirectRLEnvCfg):
     decimation = 2
     episode_length_s = 10.0
 
-    action_space = 14
-    observation_space = 28
+    action_space = 26
+    observation_space = 26
     state_space = 0
 
     sim: SimulationCfg = SimulationCfg(dt=1.0 / 120.0, render_interval=decimation)

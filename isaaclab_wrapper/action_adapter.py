@@ -10,11 +10,11 @@ class ActionAdapter:
         expected_action_dim: int | None = None,
         env_device: str = "cuda:0",
         action_scale: float = 1.0,
-        clip_actions: bool = True,
+        clip_actions: bool = False,
         clip_min: float = -1.0,
         clip_max: float = 1.0,
         debug: bool = False,
-        action_mode: str = "arm_only",
+        action_mode: str = "identity",
         model_action_dim: int | None = None,
         env_action_dim: int | None = None,
         model_action_joint_names: list[str] | None = None,
@@ -99,9 +99,11 @@ class ActionAdapter:
             idx = torch.as_tensor(self._arm_index_map, dtype=torch.long, device=action_2d.device)
             env_action = action_2d.index_select(dim=-1, index=idx)
         elif self.action_mode == "arm_plus_gripper_bridge":
-            idx = torch.as_tensor(self._arm_index_map, dtype=torch.long, device=action_2d.device)
-            env_action = action_2d.index_select(dim=-1, index=idx)
+            # Keep the full 26D policy action for environments that implement
+            # the physical gripper bridge internally. The local bridge stats are
+            # still updated for debug/telemetry only.
             self._update_gripper_bridge(action_2d)
+            env_action = action_2d
         else:
             env_action = action_2d
 
@@ -110,10 +112,11 @@ class ActionAdapter:
                 f"Env action dim mismatch: expected={self.env_action_dim}, got={int(env_action.shape[-1])}"
             )
 
-        env_action = env_action * self.action_scale
+        if self.action_mode == "arm_only":
+            env_action = env_action * self.action_scale
 
-        if self.clip_actions:
-            env_action = torch.clamp(env_action, min=self.clip_min, max=self.clip_max)
+            if self.clip_actions:
+                env_action = torch.clamp(env_action, min=self.clip_min, max=self.clip_max)
 
         if self.debug:
             print(
