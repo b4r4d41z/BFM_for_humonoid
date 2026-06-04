@@ -163,7 +163,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--hidden_layers", type=int, default=2, help="Fallback MLP hidden layers")
 
     parser.add_argument("--action_scale", type=float, default=1.0)
-    parser.add_argument("--clip_actions", action="store_true", default=True)
+    parser.add_argument("--clip_actions", action="store_true", default=False)
     parser.add_argument("--no_clip_actions", action="store_false", dest="clip_actions")
 
     parser.add_argument("--record_rollout", action="store_true")
@@ -171,7 +171,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--contract_report_dir", type=str, default="runs/bc/isaaclab_contract")
 
     parser.add_argument("--debug", action="store_true")
-    parser.add_argument("--action_mode", type=str, default="arm_only", choices=("arm_only", "arm_plus_gripper_bridge", "identity"))
+    parser.add_argument("--action_mode", type=str, default="identity", choices=("arm_only", "arm_plus_gripper_bridge", "identity"))
     parser.add_argument("--action_joint_source", type=str, default="checkpoint_meta", choices=("checkpoint_meta", "mapping_file"))
     parser.add_argument("--action_mapping_file", type=str, default=None, help="Path to JSON/YAML with model action joint names")
     parser.add_argument("--allow_provisional_mapping", action="store_true", help="Allow fallback [0:14] mapping when exact name match is unavailable")
