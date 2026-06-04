@@ -68,17 +68,12 @@ class TestTrainingEnv(DirectRLEnv):
         self._arm_action_target = torch.zeros((self.num_envs, STATE_ARM_DIM), device=self.device, dtype=torch.float32)
         self._left_hand_action_6 = self._hand_open_prototype_6.expand(self.num_envs, -1).clone()
         self._right_hand_action_6 = self._hand_open_prototype_6.expand(self.num_envs, -1).clone()
+        self._last_left_open_dist = torch.zeros((self.num_envs,), device=self.device, dtype=torch.float32)
+        self._last_left_closed_dist = torch.zeros((self.num_envs,), device=self.device, dtype=torch.float32)
+        self._last_right_open_dist = torch.zeros((self.num_envs,), device=self.device, dtype=torch.float32)
+        self._last_right_closed_dist = torch.zeros((self.num_envs,), device=self.device, dtype=torch.float32)
         self._last_joint_limit_clipped = False
         self._last_gripper_log_state: tuple[tuple[int, int], bool] | None = None
-
-        self._hand_open_prototype_6 = torch.tensor(
-            HAND_OPEN_PROTOTYPE_6, device=self.device, dtype=torch.float32
-        )
-        self._hand_closed_prototype_6 = torch.tensor(
-            HAND_CLOSED_PROTOTYPE_6, device=self.device, dtype=torch.float32
-        )
-        self._left_claw_closed = torch.zeros((self.num_envs,), device=self.device, dtype=torch.bool)
-        self._right_claw_closed = torch.zeros((self.num_envs,), device=self.device, dtype=torch.bool)
 
         self._printed_robot_info = False
         self._printed_action_contract_info = False
@@ -160,8 +155,16 @@ class TestTrainingEnv(DirectRLEnv):
         )
         self.robot.set_joint_position_target(self._joint_pos_target, joint_ids=self._ctrl_joint_ids)
 
-        self._left_claw_closed = self._hand_targets_to_closed(self._left_hand_action_6)
-        self._right_claw_closed = self._hand_targets_to_closed(self._right_hand_action_6)
+        (
+            self._left_claw_closed,
+            self._last_left_open_dist,
+            self._last_left_closed_dist,
+        ) = self._hand_targets_to_closed(self._left_hand_action_6)
+        (
+            self._right_claw_closed,
+            self._last_right_open_dist,
+            self._last_right_closed_dist,
+        ) = self._hand_targets_to_closed(self._right_hand_action_6)
         self._apply_claw_position_targets()
         self._log_action_debug()
 
@@ -185,14 +188,14 @@ class TestTrainingEnv(DirectRLEnv):
         was_clipped = bool(torch.any(torch.ne(clipped, targets)).item())
         return clipped, was_clipped
 
-    def _hand_targets_to_closed(self, hand6: torch.Tensor) -> torch.Tensor:
+    def _hand_targets_to_closed(self, hand6: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         if hand6.shape[-1] != ACTION_HAND_DIM // 2:
             raise ValueError(f"Expected 6D hand target, got shape {tuple(hand6.shape)}")
         open_proto = self._hand_open_prototype_6.expand_as(hand6)
         closed_proto = self._hand_closed_prototype_6.expand_as(hand6)
-        open_dist = torch.sum((hand6 - open_proto) ** 2, dim=-1)
-        closed_dist = torch.sum((hand6 - closed_proto) ** 2, dim=-1)
-        return closed_dist <= open_dist
+        open_dist = torch.linalg.vector_norm(hand6 - open_proto, dim=-1)
+        closed_dist = torch.linalg.vector_norm(hand6 - closed_proto, dim=-1)
+        return closed_dist <= open_dist, open_dist, closed_dist
 
     def _finger_open_closed_targets(
         self, joint_ids: Sequence[int], joint_names: Sequence[str], env_ids: torch.Tensor | None = None
@@ -211,17 +214,24 @@ class TestTrainingEnv(DirectRLEnv):
             lower = selected_limits[..., 0]
             upper = selected_limits[..., 1]
             open_targets = torch.minimum(torch.maximum(torch.zeros_like(lower), lower), upper)
-            lower_delta = torch.abs(lower - open_targets)
-            upper_delta = torch.abs(upper - open_targets)
-            closed_targets = torch.where(upper_delta >= lower_delta, upper, lower)
+            closed_targets = self._nominal_finger_closed_targets(joint_names, num_envs)
+            closed_targets = torch.minimum(torch.maximum(closed_targets, lower), upper)
             return open_targets, closed_targets
 
         open_targets = torch.zeros((num_envs, len(joint_ids)), device=self.device, dtype=torch.float32)
+        closed_targets = self._nominal_finger_closed_targets(joint_names, num_envs)
+        return open_targets, closed_targets
+
+    def _nominal_finger_closed_targets(self, joint_names: Sequence[str], num_envs: int) -> torch.Tensor:
         closed_values = []
         for name in joint_names:
-            closed_values.append(-0.78539816339 if "right" in name else 0.78539816339)
-        closed_targets = torch.tensor(closed_values, device=self.device, dtype=torch.float32).expand(num_envs, -1)
-        return open_targets, closed_targets
+            if "finger_right" in name:
+                closed_values.append(-0.78539816339)
+            elif "finger_left" in name:
+                closed_values.append(0.78539816339)
+            else:
+                raise RuntimeError(f"Could not infer claw close direction for finger joint {name!r}")
+        return torch.tensor(closed_values, device=self.device, dtype=torch.float32).expand(num_envs, -1)
 
     def _apply_claw_position_targets(self, env_ids: torch.Tensor | None = None) -> None:
         left_open, left_closed = self._finger_open_closed_targets(
@@ -238,13 +248,19 @@ class TestTrainingEnv(DirectRLEnv):
             left_closed_mask = self._left_claw_closed[env_ids].unsqueeze(-1)
             right_closed_mask = self._right_claw_closed[env_ids].unsqueeze(-1)
 
-        self._left_finger_pos_target = torch.where(left_closed_mask, left_closed, left_open)
-        self._right_finger_pos_target = torch.where(right_closed_mask, right_closed, right_open)
+        left_finger_pos_target = torch.where(left_closed_mask, left_closed, left_open)
+        right_finger_pos_target = torch.where(right_closed_mask, right_closed, right_open)
+        if env_ids is None:
+            self._left_finger_pos_target = left_finger_pos_target
+            self._right_finger_pos_target = right_finger_pos_target
+        else:
+            self._left_finger_pos_target[env_ids] = left_finger_pos_target
+            self._right_finger_pos_target[env_ids] = right_finger_pos_target
         self.robot.set_joint_position_target(
-            self._left_finger_pos_target, joint_ids=self._left_finger_joint_ids, env_ids=env_ids
+            left_finger_pos_target, joint_ids=self._left_finger_joint_ids, env_ids=env_ids
         )
         self.robot.set_joint_position_target(
-            self._right_finger_pos_target, joint_ids=self._right_finger_joint_ids, env_ids=env_ids
+            right_finger_pos_target, joint_ids=self._right_finger_joint_ids, env_ids=env_ids
         )
 
     def _log_action_debug(self) -> None:
@@ -267,6 +283,10 @@ class TestTrainingEnv(DirectRLEnv):
             "[INFO]: gripper_state "
             f"left_closed_envs={state[0][0]}/{self.num_envs} "
             f"right_closed_envs={state[0][1]}/{self.num_envs} "
+            f"left_sample_dist(open={self._last_left_open_dist[0].item():.3f}, "
+            f"closed={self._last_left_closed_dist[0].item():.3f}) "
+            f"right_sample_dist(open={self._last_right_open_dist[0].item():.3f}, "
+            f"closed={self._last_right_closed_dist[0].item():.3f}) "
             f"joint_limit_clipping={'applied' if self._last_joint_limit_clipped else 'not_applied'}"
         )
 
