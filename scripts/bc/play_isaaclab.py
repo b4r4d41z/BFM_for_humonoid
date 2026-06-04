@@ -12,6 +12,7 @@ import torch
 from isaaclab_wrapper import (
     ActionAdapter,
     BCPolicyRunner,
+    IsaacCameraBridge,
     ObservationAdapter,
     RolloutRecorder,
     create_isaaclab_env,
@@ -175,6 +176,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--rollout_output_dir", type=str, default="runs/bc/isaaclab_rollouts")
     parser.add_argument("--contract_report_dir", type=str, default="runs/bc/isaaclab_contract")
 
+    parser.add_argument("--head_camera_prim", type=str, default=None, help="Explicit USD prim path for the policy head camera")
+    parser.add_argument("--left_wrist_camera_prim", type=str, default=None, help="Explicit USD prim path for the policy left_wrist camera")
+    parser.add_argument("--right_wrist_camera_prim", type=str, default=None, help="Explicit USD prim path for the policy right_wrist camera")
+    parser.add_argument("--camera_image_width", type=int, default=224, help="Policy camera RGB width")
+    parser.add_argument("--camera_image_height", type=int, default=224, help="Policy camera RGB height")
+    parser.add_argument("--debug_save_camera_frames", action="store_true", help="Save sample policy camera frames as PNGs")
+    parser.add_argument("--debug_camera_frame_dir", type=str, default="runs/bc/isaaclab_camera_debug", help="Output dir for debug camera PNGs")
+
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--action_mode", type=str, default="identity", choices=("arm_only", "arm_plus_gripper_bridge", "identity"))
     parser.add_argument("--action_joint_source", type=str, default="checkpoint_meta", choices=("checkpoint_meta", "mapping_file"))
@@ -267,6 +276,18 @@ def main() -> None:
             hidden_dim=args.hidden_dim,
             hidden_layers=args.hidden_layers,
         )
+
+        camera_bridge = IsaacCameraBridge(
+            num_envs=args.num_envs,
+            device=args.model_device,
+            image_width=args.camera_image_width,
+            image_height=args.camera_image_height,
+            head_camera_prim=args.head_camera_prim,
+            left_wrist_camera_prim=args.left_wrist_camera_prim,
+            right_wrist_camera_prim=args.right_wrist_camera_prim,
+            debug=args.debug,
+        )
+        saved_debug_camera_frames = False
 
         expected_obs_dim = args.expected_obs_dim
         expected_action_dim = args.expected_action_dim
@@ -381,6 +402,8 @@ def main() -> None:
                 "left_hand_slice": project_contract["left_hand_slice"],
                 "right_hand_slice": project_contract["right_hand_slice"],
                 "image_keys": project_contract["image_keys"],
+                "resolved_camera_prim_paths": camera_bridge.camera_prim_paths,
+                "discovered_camera_prim_paths": camera_bridge.discovered_camera_prims,
             },
             "dims": {
                 "model_obs_dim": expected_obs_dim,
@@ -409,6 +432,8 @@ def main() -> None:
         _write_contract_report(report=report, output_dir=args.contract_report_dir)
 
         raw_obs, _ = _unwrap_reset(env.reset())
+        if hasattr(sim_app, "update"):
+            sim_app.update()
         print(f"[play_isaaclab] raw observation type: {type(raw_obs).__name__}")
 
         for step in range(int(args.max_steps)):
@@ -418,7 +443,19 @@ def main() -> None:
                 check_tensor_finite("model_obs", model_obs)
                 check_device("model_obs", model_obs, args.model_device)
 
-                model_action = policy_runner.act(model_obs)
+                model_images = camera_bridge.get_images()
+                for image_key, image_tensor in model_images.items():
+                    check_tensor_finite(f"model_images.{image_key}", image_tensor.float())
+                    check_device(f"model_images.{image_key}", image_tensor, args.model_device)
+                    if image_tensor.ndim != 4 or image_tensor.shape[-1] != 3:
+                        raise RuntimeError(
+                            f"model_images.{image_key} must be [B,H,W,3], got {tuple(image_tensor.shape)}"
+                        )
+                if args.debug_save_camera_frames and not saved_debug_camera_frames:
+                    camera_bridge.save_debug_frames(model_images, args.debug_camera_frame_dir)
+                    saved_debug_camera_frames = True
+
+                model_action = policy_runner.act(model_obs, images=model_images)
                 check_shape("model_action", model_action, expected_last_dim=expected_action_dim)
                 check_tensor_finite("model_action", model_action)
                 check_device("model_action", model_action, args.model_device)
@@ -432,6 +469,10 @@ def main() -> None:
                     print(f"[play_isaaclab] model observation shape: {tuple(model_obs.shape)}")
                     print(f"[play_isaaclab] model action shape: {tuple(model_action.shape)}")
                     print(f"[play_isaaclab] env action shape: {tuple(env_action.shape)}")
+                    print(
+                        "[play_isaaclab] model image shapes: "
+                        + ", ".join(f"{key}={tuple(value.shape)}" for key, value in model_images.items())
+                    )
                     if args.debug:
                         print_debug_tensor("model_obs", model_obs)
                         print_debug_tensor("model_action", model_action)
@@ -466,6 +507,8 @@ def main() -> None:
 
                 if done_any:
                     raw_obs, _ = _unwrap_reset(env.reset())
+                    if hasattr(sim_app, "update"):
+                        sim_app.update()
             except Exception as exc:
                 print(f"[play_isaaclab] ERROR at step={step}: {exc}")
                 traceback.print_exc()

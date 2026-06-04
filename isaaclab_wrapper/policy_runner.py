@@ -157,22 +157,36 @@ class BCPolicyRunner:
         return out
 
     @torch.no_grad()
-    def act(self, model_obs: torch.Tensor) -> torch.Tensor:
+    def act(self, model_obs: torch.Tensor, images: dict[str, torch.Tensor] | None = None) -> torch.Tensor:
         model_obs = model_obs.to(self.device)
 
         if self.model_kind == "fbcpr_model":
-            batch_size = model_obs.shape[0]
-            # Proprio-only bridge for the current visual policy architecture.
-            # TODO: feed real Isaac Lab camera tensors when visual observations are integrated.
-            zeros_img = torch.zeros((batch_size, 64, 64, 3), dtype=torch.float32, device=self.device)
+            if images is None:
+                raise RuntimeError(
+                    "FBCPR visual policy requires real IsaacSim camera images. "
+                    "No obs.images were provided; refusing to use placeholder/zero images."
+                )
+            required_image_keys = ("head", "left_wrist", "right_wrist")
+            missing = [key for key in required_image_keys if key not in images]
+            if missing:
+                raise RuntimeError(f"FBCPR visual policy missing required obs.images keys: {missing}")
+            policy_images: dict[str, torch.Tensor] = {}
+            for key in required_image_keys:
+                image = images[key].to(self.device)
+                if image.ndim != 4:
+                    raise ValueError(f"obs.images.{key} must be [B,H,W,C], got {tuple(image.shape)}")
+                if image.shape[-1] not in (1, 3, 4):
+                    raise ValueError(f"obs.images.{key} must be channel-last [B,H,W,C], got {tuple(image.shape)}")
+                if int(image.shape[0]) != int(model_obs.shape[0]):
+                    raise ValueError(
+                        f"obs.images.{key} batch size {int(image.shape[0])} does not match "
+                        f"obs.state.full batch size {int(model_obs.shape[0])}"
+                    )
+                policy_images[key] = image
             batch = {
                 "obs": {
                     "state": {"full": model_obs},
-                    "images": {
-                        "head": zeros_img,
-                        "left_wrist": zeros_img,
-                        "right_wrist": zeros_img,
-                    },
+                    "images": policy_images,
                 }
             }
             action = self.model.act(batch)
