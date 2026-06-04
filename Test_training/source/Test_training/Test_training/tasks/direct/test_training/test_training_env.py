@@ -12,6 +12,14 @@ from isaaclab.assets import Articulation, RigidObject
 from isaaclab.envs import DirectRLEnv
 from isaaclab.sim.spawners.from_files import UsdFileCfg
 
+from bc.data.schema import (
+    STATE_ARM_DIM,
+    HAND_CLOSED_PROTOTYPE_6,
+    HAND_OPEN_PROTOTYPE_6,
+    STATE_FULL_DIM,
+    STATE_HAND_DIM,
+)
+
 from .test_training_env_cfg import TestTrainingEnvCfg
 
 
@@ -31,6 +39,15 @@ class TestTrainingEnv(DirectRLEnv):
             device=self.device,
             dtype=torch.float32,
         )
+
+        self._hand_open_prototype_6 = torch.tensor(
+            HAND_OPEN_PROTOTYPE_6, device=self.device, dtype=torch.float32
+        )
+        self._hand_closed_prototype_6 = torch.tensor(
+            HAND_CLOSED_PROTOTYPE_6, device=self.device, dtype=torch.float32
+        )
+        self._left_claw_closed = torch.zeros((self.num_envs,), device=self.device, dtype=torch.bool)
+        self._right_claw_closed = torch.zeros((self.num_envs,), device=self.device, dtype=torch.bool)
 
         self._printed_robot_info = False
 
@@ -85,10 +102,36 @@ class TestTrainingEnv(DirectRLEnv):
         self._joint_pos_target = q + dq
         self.robot.set_joint_position_target(self._joint_pos_target, joint_ids=self._ctrl_joint_ids)
 
+    def _get_simulated_hand_state_12(self) -> torch.Tensor:
+        left_hand_6 = torch.where(
+            self._left_claw_closed.unsqueeze(-1),
+            self._hand_closed_prototype_6.expand(self.num_envs, -1),
+            self._hand_open_prototype_6.expand(self.num_envs, -1),
+        )
+        right_hand_6 = torch.where(
+            self._right_claw_closed.unsqueeze(-1),
+            self._hand_closed_prototype_6.expand(self.num_envs, -1),
+            self._hand_open_prototype_6.expand(self.num_envs, -1),
+        )
+        hand_state_12 = torch.cat((left_hand_6, right_hand_6), dim=-1)
+        if hand_state_12.shape[-1] != STATE_HAND_DIM:
+            raise ValueError(
+                f"Expected simulated hand state dim {STATE_HAND_DIM}, got {hand_state_12.shape[-1]}"
+            )
+        return hand_state_12
+
     def _get_observations(self) -> dict:
-        q = self.joint_pos[:, self._ctrl_joint_ids]
-        qd = self.joint_vel[:, self._ctrl_joint_ids]
-        obs = torch.cat((q, qd), dim=-1)
+        q_arm = self.joint_pos[:, self._ctrl_joint_ids]
+        hand_state_12 = self._get_simulated_hand_state_12()
+
+        if q_arm.shape[-1] != STATE_ARM_DIM:
+            raise ValueError(f"Expected arm joint position dim {STATE_ARM_DIM}, got {q_arm.shape[-1]}")
+        if hand_state_12.shape[-1] != STATE_HAND_DIM:
+            raise ValueError(f"Expected hand state dim {STATE_HAND_DIM}, got {hand_state_12.shape[-1]}")
+
+        obs = torch.cat((q_arm, hand_state_12), dim=-1)
+        if obs.shape[-1] != STATE_FULL_DIM:
+            raise ValueError(f"Expected policy observation dim {STATE_FULL_DIM}, got {obs.shape[-1]}")
         return {"policy": obs}
 
     def _get_rewards(self) -> torch.Tensor:
@@ -136,6 +179,10 @@ class TestTrainingEnv(DirectRLEnv):
             env_ids = self.robot._ALL_INDICES
 
         super()._reset_idx(env_ids)
+        env_ids = torch.as_tensor(env_ids, device=self.device, dtype=torch.long)
+
+        self._left_claw_closed[env_ids] = False
+        self._right_claw_closed[env_ids] = False
 
         joint_pos = self.robot.data.default_joint_pos[env_ids].clone()
         joint_vel = self.robot.data.default_joint_vel[env_ids].clone()
