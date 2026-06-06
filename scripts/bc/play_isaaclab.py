@@ -181,6 +181,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--right_wrist_camera_prim", type=str, default=None, help="Explicit USD prim path for the policy right_wrist camera")
     parser.add_argument("--camera_image_width", type=int, default=224, help="Policy camera RGB width")
     parser.add_argument("--camera_image_height", type=int, default=224, help="Policy camera RGB height")
+    parser.add_argument(
+        "--camera_warmup_steps",
+        type=int,
+        default=20,
+        help="Render/update cycles to run after reset before the first policy camera read",
+    )
+    parser.add_argument(
+        "--camera_retry_count",
+        type=int,
+        default=10,
+        help="Initial policy camera acquisition attempts before failing startup",
+    )
     parser.add_argument("--debug_save_camera_frames", action="store_true", help="Save sample policy camera frames as PNGs")
     parser.add_argument("--debug_camera_frame_dir", type=str, default="runs/bc/isaaclab_camera_debug", help="Output dir for debug camera PNGs")
 
@@ -234,6 +246,78 @@ def _unwrap_step(step_out: Any) -> tuple[Any, Any, Any, Any]:
         return obs, reward, done, info
 
     raise RuntimeError(f"Unsupported env.step return type: {type(step_out).__name__}")
+
+
+def _render_update_cycle(env: Any, sim_app: Any) -> None:
+    if hasattr(env, "render"):
+        env.render()
+    if hasattr(sim_app, "update"):
+        sim_app.update()
+
+
+def _validate_policy_camera_images(images: dict[str, torch.Tensor], *, num_envs: int) -> None:
+    required_image_keys = ("head", "left_wrist", "right_wrist")
+    missing = [key for key in required_image_keys if key not in images]
+    if missing:
+        raise RuntimeError(f"Policy camera images are missing required keys: {missing}")
+
+    for image_key in required_image_keys:
+        image_tensor = images[image_key]
+        check_tensor_finite(f"model_images.{image_key}", image_tensor.float())
+        if image_tensor.ndim != 4 or image_tensor.shape[0] != num_envs or image_tensor.shape[-1] != 3:
+            raise RuntimeError(
+                f"model_images.{image_key} must be [B,H,W,3] with B={num_envs}, "
+                f"got {tuple(image_tensor.shape)}"
+            )
+        if image_tensor.shape[1] <= 0 or image_tensor.shape[2] <= 0 or image_tensor.numel() == 0:
+            raise RuntimeError(f"model_images.{image_key} is empty with shape {tuple(image_tensor.shape)}")
+
+
+def _warm_up_cameras(env: Any, sim_app: Any, warmup_steps: int) -> None:
+    warmup_steps = max(0, int(warmup_steps))
+    if warmup_steps == 0:
+        print("[play_isaaclab] camera warm-up skipped (--camera_warmup_steps=0)")
+        return
+
+    print(f"[play_isaaclab] warming up cameras for {warmup_steps} render/update cycles")
+    for _ in range(warmup_steps):
+        _render_update_cycle(env, sim_app)
+
+
+def _get_initial_camera_images_with_retries(
+    camera_bridge: IsaacCameraBridge,
+    env: Any,
+    sim_app: Any,
+    *,
+    retry_count: int,
+    num_envs: int,
+    model_device: str,
+) -> dict[str, torch.Tensor]:
+    retry_count = max(1, int(retry_count))
+    last_error: Exception | None = None
+
+    for attempt in range(1, retry_count + 1):
+        print(f"[play_isaaclab] initial camera acquisition attempt {attempt}/{retry_count}")
+        try:
+            images = camera_bridge.get_images()
+            _validate_policy_camera_images(images, num_envs=num_envs)
+            for image_key, image_tensor in images.items():
+                check_device(f"model_images.{image_key}", image_tensor, model_device)
+            print(
+                "[play_isaaclab] initial camera images ready: "
+                + ", ".join(f"{key}={tuple(value.shape)}" for key, value in images.items())
+            )
+            return images
+        except Exception as exc:
+            last_error = exc
+            print(f"[play_isaaclab] initial camera acquisition attempt {attempt}/{retry_count} failed: {exc}")
+            if attempt < retry_count:
+                _render_update_cycle(env, sim_app)
+
+    raise RuntimeError(
+        f"Policy cameras did not produce valid RGB frames after {retry_count} attempts. "
+        "No zero or placeholder images were used."
+    ) from last_error
 
 
 def main() -> None:
@@ -432,8 +516,15 @@ def main() -> None:
         _write_contract_report(report=report, output_dir=args.contract_report_dir)
 
         raw_obs, _ = _unwrap_reset(env.reset())
-        if hasattr(sim_app, "update"):
-            sim_app.update()
+        _warm_up_cameras(env, sim_app, args.camera_warmup_steps)
+        initial_model_images = _get_initial_camera_images_with_retries(
+            camera_bridge,
+            env,
+            sim_app,
+            retry_count=args.camera_retry_count,
+            num_envs=args.num_envs,
+            model_device=args.model_device,
+        )
         print(f"[play_isaaclab] raw observation type: {type(raw_obs).__name__}")
 
         for step in range(int(args.max_steps)):
@@ -443,14 +534,13 @@ def main() -> None:
                 check_tensor_finite("model_obs", model_obs)
                 check_device("model_obs", model_obs, args.model_device)
 
-                model_images = camera_bridge.get_images()
-                for image_key, image_tensor in model_images.items():
-                    check_tensor_finite(f"model_images.{image_key}", image_tensor.float())
-                    check_device(f"model_images.{image_key}", image_tensor, args.model_device)
-                    if image_tensor.ndim != 4 or image_tensor.shape[-1] != 3:
-                        raise RuntimeError(
-                            f"model_images.{image_key} must be [B,H,W,3], got {tuple(image_tensor.shape)}"
-                        )
+                if step == 0:
+                    model_images = initial_model_images
+                else:
+                    model_images = camera_bridge.get_images()
+                    _validate_policy_camera_images(model_images, num_envs=args.num_envs)
+                    for image_key, image_tensor in model_images.items():
+                        check_device(f"model_images.{image_key}", image_tensor, args.model_device)
                 if args.debug_save_camera_frames and not saved_debug_camera_frames:
                     camera_bridge.save_debug_frames(model_images, args.debug_camera_frame_dir)
                     saved_debug_camera_frames = True

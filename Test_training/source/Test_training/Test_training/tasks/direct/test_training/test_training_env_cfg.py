@@ -35,10 +35,10 @@ class TestTrainingEnvCfg(DirectRLEnvCfg):
     )
 
     ctrl_joint_names = [
-        "zarm_l1_joint", "zarm_l2_joint", "zarm_l3_joint", "zarm_l4_joint",
-        "zarm_l5_joint", "zarm_l6_joint", "zarm_l7_joint",
         "zarm_r1_joint", "zarm_r2_joint", "zarm_r3_joint", "zarm_r4_joint",
         "zarm_r5_joint", "zarm_r6_joint", "zarm_r7_joint",
+        "zarm_l1_joint", "zarm_l2_joint", "zarm_l3_joint", "zarm_l4_joint",
+        "zarm_l5_joint", "zarm_l6_joint", "zarm_l7_joint",
     ]
 
     action_scale = 0.25
@@ -60,6 +60,9 @@ class TestTrainingEnvCfg(DirectRLEnvCfg):
     robot_cfg: ArticulationCfg = ArticulationCfg(
         prim_path="/World/envs/env_.*/Robot",
         spawn=UsdFileCfg(usd_path=str(_ROBOT_USD_PATH)),
+        init_state=ArticulationCfg.InitialStateCfg(
+            pos=(-0.25, 0.0, 0.0), 
+        ),
         actuators={
             "arms": ImplicitActuatorCfg(
                 joint_names_expr=[
