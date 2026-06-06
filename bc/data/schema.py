@@ -12,20 +12,20 @@ ACTION_HAND_DIM = 12
 ACTION_FULL_DIM = 26
 
 ARM_JOINT_NAMES = [
-    "l_arm_pitch",
-    "l_arm_roll",
-    "l_arm_yaw",
-    "l_forearm_pitch",
-    "l_hand_yaw",
-    "l_hand_pitch",
-    "l_hand_roll",
-    "r_arm_pitch",
-    "r_arm_roll",
-    "r_arm_yaw",
-    "r_forearm_pitch",
-    "r_hand_yaw",
-    "r_hand_pitch",
-    "r_hand_roll",
+    "zarm_r1_joint",
+    "zarm_r2_joint",
+    "zarm_r3_joint",
+    "zarm_r4_joint",
+    "zarm_r5_joint",
+    "zarm_r6_joint",
+    "zarm_r7_joint",
+    "zarm_l1_joint",
+    "zarm_l2_joint",
+    "zarm_l3_joint",
+    "zarm_l4_joint",
+    "zarm_l5_joint",
+    "zarm_l6_joint",
+    "zarm_l7_joint",
 ]
 
 HAND_VALUE_NAMES = [
