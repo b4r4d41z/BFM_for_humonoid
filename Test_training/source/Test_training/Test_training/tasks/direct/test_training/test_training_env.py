@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Sequence
 
 import torch
@@ -32,7 +33,10 @@ class TestTrainingEnv(DirectRLEnv):
     def __init__(self, cfg: TestTrainingEnvCfg, render_mode: str | None = None, **kwargs):
         super().__init__(cfg, render_mode, **kwargs)
 
-        self._ctrl_joint_ids, self._ctrl_joint_names = self.robot.find_joints(self.cfg.ctrl_joint_names)
+        found_ctrl_joint_ids, found_ctrl_joint_names = self.robot.find_joints(self.cfg.ctrl_joint_names)
+        self._ctrl_joint_ids, self._ctrl_joint_names = self._resolve_canonical_ctrl_joints(
+            found_ctrl_joint_ids, found_ctrl_joint_names
+        )
         self._left_finger_joint_ids, self._left_finger_joint_names = self.robot.find_joints(
             ["zarm_l_finger_left_joint", "zarm_l_finger_right_joint"]
         )
@@ -77,6 +81,49 @@ class TestTrainingEnv(DirectRLEnv):
 
         self._printed_robot_info = False
         self._printed_action_contract_info = False
+
+    def _resolve_canonical_ctrl_joints(
+        self, found_joint_ids: Sequence[int], found_joint_names: Sequence[str]
+    ) -> tuple[list[int], Sequence[str]]:
+        """Normalize IsaacLab arm joint IDs to the canonical model/dataset order."""
+        canonical_joint_names = self.cfg.ctrl_joint_names
+        if len(canonical_joint_names) != STATE_ARM_DIM:
+            raise RuntimeError(
+                f"Expected {STATE_ARM_DIM} configured arm joints, got {len(canonical_joint_names)}: "
+                f"{canonical_joint_names}"
+            )
+
+        configured_counts = Counter(canonical_joint_names)
+        duplicated_configured = [name for name, count in configured_counts.items() if count > 1]
+        if duplicated_configured:
+            raise RuntimeError(f"Configured arm joints contain duplicates: {duplicated_configured}")
+
+        found_joint_ids = list(found_joint_ids)
+        found_joint_names = list(found_joint_names)
+        if len(found_joint_ids) != len(found_joint_names):
+            raise RuntimeError(
+                "IsaacLab find_joints() returned mismatched joint IDs/names: "
+                f"ids={found_joint_ids}, names={found_joint_names}"
+            )
+
+        found_counts = Counter(found_joint_names)
+        missing_joints = [name for name in canonical_joint_names if found_counts[name] == 0]
+        duplicated_found = [name for name in canonical_joint_names if found_counts[name] > 1]
+        if missing_joints or duplicated_found:
+            raise RuntimeError(
+                "Configured arm joints must exist exactly once in IsaacLab find_joints() results. "
+                f"missing={missing_joints}, duplicated={duplicated_found}, "
+                f"found_names={found_joint_names}, found_ids={found_joint_ids}"
+            )
+
+        name_to_id = {name: int(joint_id) for joint_id, name in zip(found_joint_ids, found_joint_names)}
+        canonical_joint_ids = [name_to_id[name] for name in canonical_joint_names]
+
+        print(
+            "[INFO]: Canonical controlled arm joint order: "
+            f"{', '.join(canonical_joint_names)} | ids: {canonical_joint_ids}"
+        )
+        return canonical_joint_ids, canonical_joint_names
 
     def _setup_scene(self):
         # Spawn per-env static scene under env_0 so it gets cloned
