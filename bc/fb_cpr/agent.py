@@ -216,6 +216,8 @@ class FBCPRAgent:
         }
         if extra is not None:
             payload["extra"] = extra
+            if isinstance(extra, dict) and "temporal_contract" in extra:
+                payload["temporal_contract"] = extra["temporal_contract"]
         torch.save(payload, path)
 
     def load(self, path: str) -> dict[str, Any] | None:

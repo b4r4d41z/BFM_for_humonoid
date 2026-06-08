@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from bc.temporal import get_default_temporal_contract
+
 STATE_ARM_DIM = 14
 STATE_HAND_DIM = 12
 STATE_FULL_DIM = 26
@@ -139,6 +141,7 @@ def get_default_contract_metadata() -> dict[str, Any]:
         "left_hand_slice": list(LEFT_HAND_SLICE),
         "right_hand_slice": list(RIGHT_HAND_SLICE),
         "image_keys": list(IMAGE_KEYS),
+        "temporal_contract": get_default_temporal_contract(),
     }
 
 

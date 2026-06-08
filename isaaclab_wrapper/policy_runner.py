@@ -8,6 +8,7 @@ import torch
 from bc.fb_cpr.model import ModelConfig
 from bc.model_blocks import MLPConfig, VisionEncoderConfig
 from bc.nn_models import TanhDiagGaussianPolicy
+from bc.temporal import temporal_contract_from_checkpoint_meta, validate_runtime_temporal_contract
 
 
 class BCPolicyRunner:
@@ -22,6 +23,10 @@ class BCPolicyRunner:
         payload = torch.load(self.checkpoint_path, map_location=self.device)
         state_dict, meta = self._extract_state_dict(payload)
         self.checkpoint_meta: dict[str, Any] = meta if isinstance(meta, dict) else {}
+        self.temporal_contract, self.legacy_temporal_contract = temporal_contract_from_checkpoint_meta(
+            self.checkpoint_meta, warn_legacy=True
+        )
+        validate_runtime_temporal_contract(self.temporal_contract)
 
         self.model, self.model_kind = self._build_model(
             state_dict=state_dict,
@@ -43,6 +48,7 @@ class BCPolicyRunner:
         if self.debug:
             print(f"[BCPolicyRunner] loaded checkpoint={self.checkpoint_path}")
             print(f"[BCPolicyRunner] model_kind={self.model_kind}")
+            print(f"[BCPolicyRunner] temporal_contract={self.temporal_contract}")
             print(
                 f"[BCPolicyRunner] expected dims: obs={self.expected_obs_dim} "
                 f"action={self.expected_action_dim}"

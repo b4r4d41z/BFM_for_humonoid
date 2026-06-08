@@ -11,6 +11,8 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 
+from bc.temporal import DEFAULT_TEMPORAL_CONTRACT, find_future_target_indices, measure_dataset_hz
+
 from .schema import (
     ACTION_ARM_DIM,
     ACTION_FULL_DIM,
@@ -29,6 +31,8 @@ from .schema import (
 class HDF5FileInfo:
     path: str
     frames: int
+    valid_samples: int
+    actual_dataset_hz: float
 
 
 def _progress(iterable, *, total: int, desc: str):
@@ -93,7 +97,7 @@ class HDF5StreamingDataset(Dataset):
         self.log_prefix = log_prefix
 
         self.file_infos: list[HDF5FileInfo] = []
-        self.index: list[tuple[int, int]] = []
+        self.index: list[tuple[int, int, int]] = []
         self._handles: dict[int, h5py.File] = {}
         self._meta_cache: dict[int, dict[str, Any]] = {}
         self._dummy_image_cache: torch.Tensor | None = None
@@ -108,12 +112,21 @@ class HDF5StreamingDataset(Dataset):
         for file_id, path in enumerate(_progress(self.hdf5_paths, total=len(self.hdf5_paths), desc="scan h5")):
             with h5py.File(path, "r") as f:
                 frames = self._validate_file(f, path)
-            self.file_infos.append(HDF5FileInfo(path=path, frames=frames))
-            max_start = frames - self.seq_len
-            if max_start < 0:
-                continue
-            for t in range(0, max_start + 1, self.frame_stride):
-                self.index.append((file_id, t))
+                target_pairs = find_future_target_indices(
+                    f[PATHS.timestamps][()],
+                    f[PATHS.done][()],
+                    horizon_s=DEFAULT_TEMPORAL_CONTRACT.prediction_horizon_s,
+                )
+                actual_hz = measure_dataset_hz(f[PATHS.timestamps][()])
+            self.file_infos.append(HDF5FileInfo(path=path, frames=frames, valid_samples=len(target_pairs), actual_dataset_hz=actual_hz))
+            if self.seq_len != 1:
+                raise ValueError(
+                    "Temporal horizon target selection currently supports seq_len=1; "
+                    f"got seq_len={self.seq_len}."
+                )
+            for sample_idx, (t, target_t) in enumerate(target_pairs):
+                if sample_idx % self.frame_stride == 0:
+                    self.index.append((file_id, t, target_t))
         elapsed = perf_counter() - start
         print(
             f"{self.log_prefix} index ready: files={len(self.file_infos)} samples={len(self.index)} "
@@ -141,6 +154,7 @@ class HDF5StreamingDataset(Dataset):
             PATHS.act_hand_target,
             PATHS.act_action,
             PATHS.done,
+            PATHS.timestamps,
         ]
         if self.use_images:
             required.extend(get_image_path(cam) for cam in self.cameras)
@@ -258,11 +272,12 @@ class HDF5StreamingDataset(Dataset):
             self._dummy_image_cache = torch.zeros((size, size, 3), dtype=torch.uint8)
         return self._dummy_image_cache.clone()
 
-    def _read_one(self, file_id: int, t: int) -> dict[str, Any]:
+    def _read_one(self, file_id: int, t: int, target_t: int | None = None) -> dict[str, Any]:
         f = self._get_h5(file_id)
         obs_full = np.asarray(f[PATHS.obs_state][t], dtype=np.float32)
         next_obs_full = np.asarray(f[PATHS.next_obs_state][t], dtype=np.float32)
-        act_full = np.asarray(f[PATHS.act_action][t], dtype=np.float32)
+        target_t = t if target_t is None else int(target_t)
+        act_full = np.asarray(f[PATHS.obs_state][target_t], dtype=np.float32)
         obs_state = split_state_vector(obs_full)
         next_obs_state = split_state_vector(next_obs_full)
         act_state = split_action_vector(act_full)
@@ -270,8 +285,8 @@ class HDF5StreamingDataset(Dataset):
         sample: dict[str, Any] = {
             "obs": {"state": {k: torch.from_numpy(np.asarray(v, dtype=np.float32)) for k, v in obs_state.items()}},
             "action": {
-                "arm": torch.from_numpy(np.asarray(f[PATHS.act_joint_target][t], dtype=np.float32)),
-                "hand": torch.from_numpy(np.asarray(f[PATHS.act_hand_target][t], dtype=np.float32)),
+                "arm": torch.from_numpy(np.asarray(act_state["arm"], dtype=np.float32)),
+                "hand": torch.from_numpy(np.asarray(act_state["hand"], dtype=np.float32)),
                 "full": torch.from_numpy(np.asarray(act_state["full"], dtype=np.float32)),
             },
             "next_obs": {"state": {k: torch.from_numpy(np.asarray(v, dtype=np.float32)) for k, v in next_obs_state.items()}},
@@ -295,15 +310,16 @@ class HDF5StreamingDataset(Dataset):
         sample["obs"]["images"] = images
 
         meta = self._load_meta_once(file_id, f)
+        meta["actual_dataset_hz"] = float(self.file_infos[file_id].actual_dataset_hz)
         if meta:
             sample["meta"] = dict(meta)
         return sample
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
-        file_id, start = self.index[idx]
+        file_id, start, target_t = self.index[idx]
         if self.seq_len == 1:
-            return self._read_one(file_id, start)
-        items = [self._read_one(file_id, start + offset) for offset in range(self.seq_len)]
+            return self._read_one(file_id, start, target_t)
+        items = [self._read_one(file_id, start + offset, target_t + offset) for offset in range(self.seq_len)]
         return _stack_sequence(items)
 
     def close(self) -> None:

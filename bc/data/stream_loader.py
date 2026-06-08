@@ -6,6 +6,8 @@ from typing import Any
 import h5py
 import numpy as np
 import torch
+
+from bc.temporal import DEFAULT_TEMPORAL_CONTRACT, find_future_target_indices, measure_dataset_hz
 from torch.utils.data import Dataset
 
 from .schema import (
@@ -89,6 +91,8 @@ class HDF5DataStreamLoader(Dataset):
 
         self._h5: h5py.File | None = None
         self._meta_cache: dict[str, Any] | None = None
+        self._index: list[tuple[int, int]] = []
+        self.actual_dataset_hz: float = float("nan")
 
         with h5py.File(self.hdf5_path, "r") as f:
             self._validate_structure(f)
@@ -96,7 +100,13 @@ class HDF5DataStreamLoader(Dataset):
             fill_and_validate_contract_metadata(
                 raw_meta, context=f"{self.hdf5_path}/meta", warn=True
             )
-            self.length = int(f[PATHS.done].shape[0])
+            self._index = find_future_target_indices(
+                f[PATHS.timestamps][()],
+                f[PATHS.done][()],
+                horizon_s=DEFAULT_TEMPORAL_CONTRACT.prediction_horizon_s,
+            )
+            self.actual_dataset_hz = measure_dataset_hz(f[PATHS.timestamps][()])
+            self.length = len(self._index)
 
     def __len__(self) -> int:
         return self.length
@@ -118,6 +128,7 @@ class HDF5DataStreamLoader(Dataset):
             PATHS.act_hand_target,
             PATHS.act_action,
             PATHS.done,
+            PATHS.timestamps,
         ]
 
         if self.use_images:
@@ -141,6 +152,7 @@ class HDF5DataStreamLoader(Dataset):
             PATHS.act_joint_target,
             PATHS.act_hand_target,
             PATHS.act_action,
+            PATHS.timestamps,
         ]
 
         if PATHS.reward in f:
@@ -305,17 +317,17 @@ class HDF5DataStreamLoader(Dataset):
         f = self._get_h5()
         meta = self._load_meta_once()
 
-        # Raw states
-        obs_state_full = np.asarray(f[PATHS.obs_state][idx], dtype=np.float32)
-        next_obs_state_full = np.asarray(f[PATHS.next_obs_state][idx], dtype=np.float32)
+        raw_idx, target_idx = self._index[idx]
 
-        # Raw actions
-        act_full = np.asarray(f[PATHS.act_action][idx], dtype=np.float32)
-        act_arm = np.asarray(f[PATHS.act_joint_target][idx], dtype=np.float32)
-        act_hand = np.asarray(f[PATHS.act_hand_target][idx], dtype=np.float32)
+        # Raw states
+        obs_state_full = np.asarray(f[PATHS.obs_state][raw_idx], dtype=np.float32)
+        next_obs_state_full = np.asarray(f[PATHS.next_obs_state][raw_idx], dtype=np.float32)
+
+        # Future absolute 26D state action target at t + prediction_horizon_s
+        act_full = np.asarray(f[PATHS.obs_state][target_idx], dtype=np.float32)
 
         # Required transition flag
-        done = bool(np.asarray(f[PATHS.done][idx]))
+        done = bool(np.asarray(f[PATHS.done][raw_idx]))
 
         # Split canonical state/action
         obs_state = split_state_vector(obs_state_full)
@@ -331,8 +343,8 @@ class HDF5DataStreamLoader(Dataset):
                 },
             },
             "action": {
-                "arm": torch.from_numpy(act_arm),
-                "hand": torch.from_numpy(act_hand),
+                "arm": torch.from_numpy(np.asarray(act_state["arm"], dtype=np.float32)),
+                "hand": torch.from_numpy(np.asarray(act_state["hand"], dtype=np.float32)),
                 "full": torch.from_numpy(np.asarray(act_state["full"], dtype=np.float32)),
             },
             "next_obs": {
@@ -347,7 +359,7 @@ class HDF5DataStreamLoader(Dataset):
 
         # Optional reward
         if PATHS.reward in f:
-            reward = float(np.asarray(f[PATHS.reward][idx]))
+            reward = float(np.asarray(f[PATHS.reward][raw_idx]))
             sample["reward"] = torch.tensor(reward, dtype=torch.float32)
 
         # Optional images
@@ -356,14 +368,16 @@ class HDF5DataStreamLoader(Dataset):
 
             for key in IMAGE_KEYS:
                 image_path = get_image_path(key)
-                img = np.asarray(f[image_path][idx])
+                img = np.asarray(f[image_path][raw_idx])
                 images[key] = torch.from_numpy(img)
 
             sample["obs"]["images"] = images
 
         # Optional meta block
         if len(meta) > 0:
-            sample["meta"] = dict(meta)
+            meta = dict(meta)
+            meta["actual_dataset_hz"] = float(self.actual_dataset_hz)
+            sample["meta"] = meta
 
         return sample
 

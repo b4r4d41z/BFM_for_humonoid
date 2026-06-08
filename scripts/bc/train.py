@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any
 
 import torch
+import h5py
+import numpy as np
 from torch.utils.data import DataLoader
 
 
@@ -19,6 +21,21 @@ from bc.data.hdf5_discovery import discover_h5_files, limit_h5_files, print_h5_d
 from bc.data.hdf5_streaming_dataset import HDF5StreamingDataset
 from bc.fb_cpr.agent import AgentConfig, FBCPRAgent, TrainConfig
 from bc.fb_cpr.model import ModelConfig
+from bc.temporal import build_temporal_contract_metadata, DEFAULT_TEMPORAL_CONTRACT, measure_dataset_hz
+from bc.data.schema import PATHS
+
+
+def measure_selected_dataset_hz(h5_files: list[Path]) -> float:
+    values: list[float] = []
+    for path in h5_files:
+        with h5py.File(path, "r") as f:
+            if PATHS.timestamps in f:
+                hz = measure_dataset_hz(f[PATHS.timestamps][()])
+                if np.isfinite(hz):
+                    values.append(float(hz))
+    if not values:
+        return float("nan")
+    return float(np.median(values))
 
 
 def str_to_bool(value: str | bool) -> bool:
@@ -85,6 +102,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--updates", type=int, default=10_000, help="Number of optimizer update steps")
     parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--seq_len", type=int, default=1, help="If >1, sample sequence batches [B,T,...]")
+    parser.add_argument("--policy_hz", type=float, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--prediction_horizon_steps", type=int, default=None, help=argparse.SUPPRESS)
 
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--weight_decay", type=float, default=0.0)
@@ -512,6 +531,18 @@ def main() -> None:
         max_files=args.max_files,
     )
 
+    if args.policy_hz is not None or args.prediction_horizon_steps is not None:
+        print(
+            "[BFM offline train][warn] --policy_hz and --prediction_horizon_steps are deprecated and ignored; "
+            "using shared temporal contract "
+            f"policy_hz={DEFAULT_TEMPORAL_CONTRACT.policy_hz} prediction_horizon_s={DEFAULT_TEMPORAL_CONTRACT.prediction_horizon_s}.",
+            flush=True,
+        )
+
+    actual_dataset_hz = measure_selected_dataset_hz(h5_files)
+    temporal_contract = build_temporal_contract_metadata(actual_dataset_hz=actual_dataset_hz)
+    print(f"[BFM offline train] temporal_contract={temporal_contract}", flush=True)
+
     train_files, val_files, split_info = split_files(
         h5_files,
         val_ratio=args.val_ratio,
@@ -710,6 +741,7 @@ def main() -> None:
                 "best_step": best_step,
                 "best_metric_name": args.best_metric,
                 "split_info": split_info,
+                "temporal_contract": temporal_contract,
             }
             agent.save(str(last_path), extra=extra)
             # Keep backward-compatible alias at requested save_path.

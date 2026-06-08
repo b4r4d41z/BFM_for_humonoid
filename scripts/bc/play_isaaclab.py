@@ -14,6 +14,7 @@ from isaaclab_wrapper import (
     BCPolicyRunner,
     IsaacCameraBridge,
     ObservationAdapter,
+    PolicyScheduler,
     RolloutRecorder,
     create_isaaclab_env,
 )
@@ -361,6 +362,17 @@ def main() -> None:
             hidden_layers=args.hidden_layers,
         )
 
+        policy_scheduler = PolicyScheduler(
+            policy_hz=policy_runner.temporal_contract["policy_hz"],
+            control_hz=policy_runner.temporal_contract.get("isaaclab_control_hz", 60.0),
+        )
+        print(
+            "[play_isaaclab] temporal scheduler: "
+            f"policy_hz={policy_scheduler.policy_hz} control_hz={policy_scheduler.control_hz} "
+            f"physics_hz={policy_runner.temporal_contract.get('isaaclab_physics_hz', 120.0)}",
+            flush=True,
+        )
+
         camera_bridge = IsaacCameraBridge(
             num_envs=args.num_envs,
             device=args.model_device,
@@ -489,6 +501,8 @@ def main() -> None:
                 "resolved_camera_prim_paths": camera_bridge.camera_prim_paths,
                 "discovered_camera_prim_paths": camera_bridge.discovered_camera_prims,
             },
+            "temporal_contract": dict(policy_runner.temporal_contract),
+            "legacy_temporal_contract": bool(policy_runner.legacy_temporal_contract),
             "dims": {
                 "model_obs_dim": expected_obs_dim,
                 "model_action_dim": expected_action_dim,
@@ -545,7 +559,10 @@ def main() -> None:
                     camera_bridge.save_debug_frames(model_images, args.debug_camera_frame_dir)
                     saved_debug_camera_frames = True
 
-                model_action = policy_runner.act(model_obs, images=model_images)
+                def _infer_model_action() -> torch.Tensor:
+                    return policy_runner.act(model_obs, images=model_images)
+
+                model_action, did_policy_infer = policy_scheduler.tick(_infer_model_action)
                 check_shape("model_action", model_action, expected_last_dim=expected_action_dim)
                 check_tensor_finite("model_action", model_action)
                 check_device("model_action", model_action, args.model_device)
@@ -559,6 +576,7 @@ def main() -> None:
                     print(f"[play_isaaclab] model observation shape: {tuple(model_obs.shape)}")
                     print(f"[play_isaaclab] model action shape: {tuple(model_action.shape)}")
                     print(f"[play_isaaclab] env action shape: {tuple(env_action.shape)}")
+                    print(f"[play_isaaclab] did_policy_infer={did_policy_infer}")
                     print(
                         "[play_isaaclab] model image shapes: "
                         + ", ".join(f"{key}={tuple(value.shape)}" for key, value in model_images.items())
@@ -597,6 +615,7 @@ def main() -> None:
 
                 if done_any:
                     raw_obs, _ = _unwrap_reset(env.reset())
+                    policy_scheduler.reset()
                     if hasattr(sim_app, "update"):
                         sim_app.update()
             except Exception as exc:
