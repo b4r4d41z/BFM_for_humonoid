@@ -1,3 +1,5 @@
+Test_training/source/Test_training/Test_training/assets/robots/old/
+
 # checkpoints
 checkpoints/
 *.pt
@@ -175,3 +177,4 @@ wandb/
 # *.bag
 # *.hdf5
 # *.h5
+source/Test_training/Test_training/assets/robots/old/
