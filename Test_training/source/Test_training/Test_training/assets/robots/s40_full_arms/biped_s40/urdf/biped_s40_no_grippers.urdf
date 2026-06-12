@@ -457,6 +457,9 @@
     <parent link="leg_r6_link"/>
     <child link="r_foot_heel"/>
   </joint>
+  <!-- ============================================================ -->
+  <!-- LEFT ARM: 7-DOF KINEMATIC CHAIN                              -->
+  <!-- ============================================================ -->
   <link name="zarm_l1_link">
     <inertial>
       <origin xyz="0.008 -0.00158 0.0036" rpy="0 0 0"/>
@@ -601,10 +604,28 @@
       <mass value="0.81"/>
       <inertia ixx="0.00117" ixy="2e-05" ixz="0.0" iyy="0.00128" iyz="-2e-05" izz="0.00036"/>
     </inertial>
+    <!--
+    ORIGINAL FIXED-GRIPPER VISUAL DISABLED.
+
+    This block is intentionally preserved for traceability.
+    The original mesh contains the previous non-actuated gripper geometry.
+    It is disabled to free visual space for the separately imported
+    Robotiq 2F-85 gripper in Isaac Sim.
+
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
         <mesh filename="../meshes/l_hand_roll.STL"/>
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1"/>
+      </material>
+    </visual>
+    -->
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="../meshes/l_hand_roll_no_gripper.STL"/>
       </geometry>
       <material name="">
         <color rgba="1 1 1 1"/>
@@ -618,19 +639,36 @@
     <axis xyz="1 0 0"/>
     <limit lower="-1.5707963267949" upper="1.5707963267949" effort="6.0" velocity="21.666"/>
   </joint>
+  <!-- ============================================================ -->
+  <!-- END LEFT ARM                                                 -->
+  <!-- ============================================================ -->
+
+  <!-- ============================================================ -->
+  <!-- LEFT GRIPPER MOUNT: ROBOTIQ 2F-85 ATTACHMENT FRAME           -->
+  <!-- ============================================================ -->
+  <!-- TODO: Validate and calibrate this Robotiq mount transform during Isaac Sim assembly. -->
   <link name="zarm_l7_end_effector">
+    <!--
+    ORIGINAL PLACEHOLDER END-EFFECTOR COLLISION DISABLED.
+
+    The future Robotiq 2F-85 gripper will provide its own collision geometry.
+
     <collision>
       <origin rpy="0 0 0" xyz="0 0 0"/>
       <geometry>
         <sphere radius="0.005"/>
       </geometry>
     </collision>
+    -->
   </link>
   <joint name="zarm_l7_end_effector_joint" type="fixed">
     <origin xyz="0 -0.03 -0.17" rpy="0 0 0"/>
     <parent link="zarm_l7_link"/>
     <child link="zarm_l7_end_effector"/>
   </joint>
+  <!-- ============================================================ -->
+  <!-- RIGHT ARM: 7-DOF KINEMATIC CHAIN                             -->
+  <!-- ============================================================ -->
   <link name="zarm_r1_link">
     <inertial>
       <origin xyz="0.008 0.00158 -0.0036" rpy="0 0 0"/>
@@ -775,10 +813,28 @@
       <mass value="0.81"/>
       <inertia ixx="0.00098" ixy="-1e-05" ixz="1e-05" iyy="0.00104" iyz="1e-05" izz="0.00027"/>
     </inertial>
+    <!--
+    ORIGINAL FIXED-GRIPPER VISUAL DISABLED.
+
+    This block is intentionally preserved for traceability.
+    The original mesh contains the previous non-actuated gripper geometry.
+    It is disabled to free visual space for the separately imported
+    Robotiq 2F-85 gripper in Isaac Sim.
+
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
         <mesh filename="../meshes/r_hand_roll.STL"/>
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1"/>
+      </material>
+    </visual>
+    -->
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="../meshes/r_hand_roll_no_gripper.STL"/>
       </geometry>
       <material name="">
         <color rgba="1 1 1 1"/>
@@ -792,13 +848,27 @@
     <axis xyz="1 0 0"/>
     <limit lower="-1.5707963267949" upper="1.5707963267949" effort="6.0" velocity="21.666"/>
   </joint>
+  <!-- ============================================================ -->
+  <!-- END RIGHT ARM                                                -->
+  <!-- ============================================================ -->
+
+  <!-- ============================================================ -->
+  <!-- RIGHT GRIPPER MOUNT: ROBOTIQ 2F-85 ATTACHMENT FRAME          -->
+  <!-- ============================================================ -->
+  <!-- TODO: Validate and calibrate this Robotiq mount transform during Isaac Sim assembly. -->
   <link name="zarm_r7_end_effector">
+    <!--
+    ORIGINAL PLACEHOLDER END-EFFECTOR COLLISION DISABLED.
+
+    The future Robotiq 2F-85 gripper will provide its own collision geometry.
+
     <collision>
       <origin rpy="0 0 0" xyz="0 0 0"/>
       <geometry>
         <sphere radius="0.005"/>
       </geometry>
     </collision>
+    -->
   </link>
   <joint name="zarm_r7_end_effector_joint" type="fixed">
     <origin xyz="0 0.03 -0.17" rpy="0 0 0"/>
