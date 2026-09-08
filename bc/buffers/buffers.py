@@ -194,6 +194,7 @@ def _canonical_transition_from_episode(
         "action": _nested_index_time(episode["action"], t),
         "next_obs": _nested_index_time(episode["next_obs"], t),
         "done": _nested_index_time(episode["done"], t),
+        "timestamp": _nested_index_time(episode["timestamp"], t),
     }
 
     if "reward" in episode:
@@ -215,6 +216,7 @@ def _canonical_sequence_from_episode(
         "action": _nested_slice_time(episode["action"], start, end),
         "next_obs": _nested_slice_time(episode["next_obs"], start, end),
         "done": _nested_slice_time(episode["done"], start, end),
+        "timestamp": _nested_slice_time(episode["timestamp"], start, end),
     }
 
     if "reward" in episode:
@@ -257,6 +259,7 @@ class OfflineTrajectoryBuffer:
             }
         },
         "done":   [T],
+        "timestamp": [T],
         "reward": [T],      # optional
         "meta":   {...},    # optional, per-episode
     }
@@ -317,6 +320,7 @@ class OfflineTrajectoryBuffer:
             ["next_obs", "state", "hand"],
             ["next_obs", "state", "full"],
             ["done"],
+            ["timestamp"],
         ]
 
         for path in required_paths:
@@ -344,6 +348,7 @@ class OfflineTrajectoryBuffer:
                 }
             },
             "done": _to_torch(_nested_get(episode, ["done"])).to(self.storage_device),
+            "timestamp": _to_torch(_nested_get(episode, ["timestamp"])).to(self.storage_device),
         }
 
         episode_len = _infer_time_length(prepared["obs"]["state"]["full"])
@@ -373,6 +378,24 @@ class OfflineTrajectoryBuffer:
         _check_time_length(prepared["next_obs"]["state"]["full"], episode_len, "next_obs/state/full")
 
         _check_time_length(prepared["done"], episode_len, "done")
+        _check_time_length(prepared["timestamp"], episode_len, "timestamp")
+
+        for root in ("obs", "next_obs"):
+            state = prepared[root]["state"]
+            if not torch.equal(torch.cat([state["arm"], state["hand"]], dim=-1), state["full"]):
+                raise ValueError(f"{root}/state/full must equal arm + hand concatenation")
+        if not torch.equal(
+            torch.cat([prepared["action"]["arm"], prepared["action"]["hand"]], dim=-1),
+            prepared["action"]["full"],
+        ):
+            raise ValueError("action/full must equal action/arm + action/hand concatenation")
+
+        done_np = prepared["done"].detach().cpu().numpy().astype(bool).reshape(-1)
+        ts_np = prepared["timestamp"].detach().cpu().numpy().astype(np.float64).reshape(-1)
+        if episode_len == 0 or not done_np[-1] or np.any(done_np[:-1]):
+            raise ValueError("buffer episodes must contain exactly one episode ending with done=True")
+        if not np.all(np.isfinite(ts_np)) or (episode_len > 1 and np.any(np.diff(ts_np) <= 0.0)):
+            raise ValueError("timestamps must be finite and strictly increasing within an episode")
 
         has_images = _nested_has(episode, ["obs", "images"])
         if has_images:
@@ -506,6 +529,7 @@ class OfflineTrajectoryBuffer:
             "action": _nested_stack([x["action"] for x in transitions], dim=0),
             "next_obs": _nested_stack([x["next_obs"] for x in transitions], dim=0),
             "done": _nested_stack([x["done"] for x in transitions], dim=0),
+            "timestamp": _nested_stack([x["timestamp"] for x in transitions], dim=0),
         }
 
         if self.has_reward:
@@ -554,6 +578,7 @@ class OfflineTrajectoryBuffer:
             "action": _nested_stack([x["action"] for x in sequences], dim=0),
             "next_obs": _nested_stack([x["next_obs"] for x in sequences], dim=0),
             "done": _nested_stack([x["done"] for x in sequences], dim=0),
+            "timestamp": _nested_stack([x["timestamp"] for x in sequences], dim=0),
         }
 
         if self.has_reward:
@@ -609,6 +634,7 @@ class OfflineTrajectoryBuffer:
         next_obs_full: list[torch.Tensor] = []
 
         done_list: list[torch.Tensor] = []
+        timestamp_list: list[torch.Tensor] = []
         reward_list: list[torch.Tensor] = []
 
         image_lists: dict[str, list[torch.Tensor]] = {k: [] for k in IMAGE_KEYS}
@@ -631,6 +657,7 @@ class OfflineTrajectoryBuffer:
             next_obs_full.append(_to_torch(_nested_get(sample, ["next_obs", "state", "full"])))
 
             done_list.append(_to_torch(_nested_get(sample, ["done"])))
+            timestamp_list.append(_to_torch(_nested_get(sample, ["timestamp"])))
 
             if has_reward:
                 if "reward" not in sample:
@@ -674,6 +701,7 @@ class OfflineTrajectoryBuffer:
                 }
             },
             "done": torch.stack(done_list, dim=0),
+            "timestamp": torch.stack(timestamp_list, dim=0),
         }
 
         if has_reward:

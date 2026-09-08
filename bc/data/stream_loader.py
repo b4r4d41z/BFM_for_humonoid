@@ -7,7 +7,7 @@ import h5py
 import numpy as np
 import torch
 
-from bc.temporal import DEFAULT_TEMPORAL_CONTRACT, find_future_target_indices, measure_dataset_hz
+from bc.temporal import measure_dataset_hz, validate_episode_timestamps
 from torch.utils.data import Dataset
 
 from .schema import (
@@ -91,7 +91,7 @@ class HDF5DataStreamLoader(Dataset):
 
         self._h5: h5py.File | None = None
         self._meta_cache: dict[str, Any] | None = None
-        self._index: list[tuple[int, int]] = []
+        self._index: list[int] = []
         self.actual_dataset_hz: float = float("nan")
 
         with h5py.File(self.hdf5_path, "r") as f:
@@ -100,11 +100,7 @@ class HDF5DataStreamLoader(Dataset):
             fill_and_validate_contract_metadata(
                 raw_meta, context=f"{self.hdf5_path}/meta", warn=True
             )
-            self._index = find_future_target_indices(
-                f[PATHS.timestamps][()],
-                f[PATHS.done][()],
-                horizon_s=DEFAULT_TEMPORAL_CONTRACT.prediction_horizon_s,
-            )
+            self._index = list(range(int(f[PATHS.done].shape[0])))
             self.actual_dataset_hz = measure_dataset_hz(f[PATHS.timestamps][()])
             self.length = len(self._index)
 
@@ -206,6 +202,27 @@ class HDF5DataStreamLoader(Dataset):
             raise ValueError(
                 f"{PATHS.act_hand_target} must have shape [N, {ACTION_HAND_DIM}]"
             )
+
+        raw_meta = self._read_contract_meta_from_file(f)
+        missing_meta = [key for key in ("obs_dim", "arm_joint_names", "hand_value_names") if key not in raw_meta]
+        if "action_dim" not in raw_meta and "act_dim" not in raw_meta:
+            missing_meta.append("action_dim (or legacy act_dim)")
+        if missing_meta:
+            raise ValueError(
+                f"{self.hdf5_path}: missing metadata required to validate 26D ordering: "
+                + ", ".join(missing_meta)
+            )
+        done = np.asarray(f[PATHS.done][()], dtype=bool)
+        validate_episode_timestamps(f[PATHS.timestamps][()], done)
+        action = np.asarray(f[PATHS.act_action][()], dtype=np.float32)
+        components = np.concatenate([f[PATHS.act_joint_target][()], f[PATHS.act_hand_target][()]], axis=1)
+        if not np.allclose(action, components, rtol=1e-5, atol=1e-6):
+            raise ValueError("/act/action is inconsistent with /act/joint_target + /act/hand_target")
+        obs = np.asarray(f[PATHS.obs_state][()], dtype=np.float32)
+        next_obs = np.asarray(f[PATHS.next_obs_state][()], dtype=np.float32)
+        nonterminal = np.flatnonzero(~done[:-1])
+        if nonterminal.size and not np.allclose(next_obs[nonterminal], obs[nonterminal + 1], rtol=1e-5, atol=1e-6):
+            raise ValueError("/next_obs/state[t] must equal /obs/state[t+1] for non-terminal transitions")
 
     @staticmethod
     def _decode_scalar(x: Any) -> Any:
@@ -317,14 +334,14 @@ class HDF5DataStreamLoader(Dataset):
         f = self._get_h5()
         meta = self._load_meta_once()
 
-        raw_idx, target_idx = self._index[idx]
+        raw_idx = self._index[idx]
 
         # Raw states
         obs_state_full = np.asarray(f[PATHS.obs_state][raw_idx], dtype=np.float32)
         next_obs_state_full = np.asarray(f[PATHS.next_obs_state][raw_idx], dtype=np.float32)
 
-        # Future absolute 26D state action target at t + prediction_horizon_s
-        act_full = np.asarray(f[PATHS.obs_state][target_idx], dtype=np.float32)
+        # The canonical action is the command stored at this same timestep.
+        act_full = np.asarray(f[PATHS.act_action][raw_idx], dtype=np.float32)
 
         # Required transition flag
         done = bool(np.asarray(f[PATHS.done][raw_idx]))
@@ -355,6 +372,7 @@ class HDF5DataStreamLoader(Dataset):
                 }
             },
             "done": torch.tensor(done, dtype=torch.bool),
+            "timestamp": torch.tensor(float(np.asarray(f[PATHS.timestamps][raw_idx])), dtype=torch.float64),
         }
 
         # Optional reward
