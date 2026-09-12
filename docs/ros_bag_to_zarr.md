@@ -7,7 +7,7 @@ It never interpolates or resamples; a missing match fails conversion. The last
 state supplies `next_obs` for the preceding transition, so an input with `N`
 state samples produces `N-1` transitions and only the final transition is done.
 
-Copy `configs/data_contract/rosbag_topics.example.json` and replace every vector
+Copy `tools/data_conversion/rosbag_topics.example.json` and replace every vector
 `field` with the confirmed dotted ROS message attribute containing values in the
 project's exact order. The repository does not establish those message fields or
 the streams' units. Consequently, `scale`, optional `offset`, and `units` are
@@ -21,7 +21,7 @@ training-time random access over preserving transport encoding. All frames for a
 camera must have one resolution.
 
 ```bash
-python scripts/data/convert_bag_to_zarr.py \
+python -m tools.data_conversion.convert_to_zarr \
   --input /path/to/episode.bag \
   --output /path/to/episode.zarr \
   --topics /path/to/topics.json \

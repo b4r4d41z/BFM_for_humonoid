@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 
-from bc.data.ros_episode import Timestamped
+from tools.data_conversion.bag_converter import Timestamped
 
 REQUIRED_ROLES = ("arm_state", "hand_state", "arm_command", "hand_command")
 

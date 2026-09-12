@@ -6,8 +6,8 @@ import argparse
 from pathlib import Path
 
 from bc.data.canonical_zarr import SCHEMA_NAME, SCHEMA_VERSION, write_canonical_zarr
-from bc.data.ros_episode import build_canonical_episode
-from bc.data.rosbag_reader import load_topic_config, read_rosbag
+from tools.data_conversion.bag_converter import build_canonical_episode
+from tools.data_conversion.rosbag_reader import load_topic_config, read_rosbag
 from bc.data.schema import ARM_JOINT_NAMES, HAND_VALUE_NAMES, get_default_contract_metadata
 from bc.temporal import build_temporal_contract_metadata, measure_dataset_hz
 
