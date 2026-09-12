@@ -1,0 +1,18 @@
+{
+  "streams": {
+    "arm_state": {"topic": "/robot_arm_q_v_tau", "field": "REPLACE_WITH_CONFIRMED_VECTOR_FIELD", "scale": 1.0},
+    "hand_state": {"topic": "/robot_hand_position", "field": "REPLACE_WITH_CONFIRMED_VECTOR_FIELD", "scale": 1.0},
+    "arm_command": {"topic": "/kuavo_arm_traj", "field": "REPLACE_WITH_CONFIRMED_VECTOR_FIELD", "scale": 1.0},
+    "hand_command": {"topic": "/control_robot_hand_position", "field": "REPLACE_WITH_CONFIRMED_VECTOR_FIELD", "scale": 1.0}
+  },
+  "cameras": {
+    "camera_1": {"topic": "/cam_1/color/image_raw/compressed"},
+    "camera_2": {"topic": "/cam_2/color/image_raw/compressed"}
+  },
+  "units": {
+    "arm_state": "MUST_BE_CONFIRMED",
+    "hand_state": "MUST_BE_CONFIRMED",
+    "arm_command": "MUST_BE_CONFIRMED",
+    "hand_command": "MUST_BE_CONFIRMED"
+  }
+}
