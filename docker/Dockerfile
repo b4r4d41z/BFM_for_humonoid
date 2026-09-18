@@ -1,96 +1,191 @@
-FROM ubuntu:24.04
+# ============================================================
+# BFM development environment
+#
+# Isaac Sim 6.1
+# Isaac Lab 3.0
+# ROS 2 Jazzy
+# Miniforge / Conda
+# PyTorch (provided by Isaac Sim / Isaac Lab environment)
+# Zarr / HDF5 and common ML tools
+#
+# The BFM repository itself is NOT copied into this image.
+# ============================================================
+
+FROM nvcr.io/nvidia/isaac-sim:6.1.0
+
+USER root
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=UTC
 
-# Locale
+SHELL ["/bin/bash", "-c"]
+
+
+# ============================================================
+# Base development tools
+# ============================================================
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    git-lfs \
+    curl \
+    wget \
+    ca-certificates \
+    build-essential \
+    cmake \
+    ninja-build \
+    pkg-config \
+    nano \
+    vim \
+    tmux \
+    tree \
+    htop \
+    openssh-client \
+    gnupg2 \
+    lsb-release \
+    locales \
+    sudo \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git lfs install
+
+RUN locale-gen en_US.UTF-8
+
 ENV LANG=en_US.UTF-8
 ENV LC_ALL=en_US.UTF-8
 
-SHELL ["/bin/bash", "-c"]
 
-# =========================
-# Base system
-# =========================
-RUN apt-get update && apt-get install -y \
-    python3 python3-venv python3-pip python-is-python3 \
-    git build-essential wget curl ca-certificates \
-    locales sudo \
-    gnupg2 lsb-release bzip2 \
- && rm -rf /var/lib/apt/lists/*
-
-RUN locale-gen en_US.UTF-8 && update-locale LANG=en_US.UTF-8
-
-# =========================
-# ROS 2 repository + key
-# =========================
-RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
-    | gpg --dearmor -o /usr/share/keyrings/ros-archive-keyring.gpg
-
-RUN ARCH="$(dpkg --print-architecture)" && \
-    echo "deb [arch=${ARCH} signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] \
-http://packages.ros.org/ros2/ubuntu $(lsb_release -cs) main" \
-> /etc/apt/sources.list.d/ros2.list
-
-# =========================
+# ============================================================
 # ROS 2 Jazzy
-# =========================
-RUN apt-get update && apt-get install -y \
+# ============================================================
+
+RUN curl -sSL \
+    https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+    | gpg --dearmor \
+    -o /usr/share/keyrings/ros-archive-keyring.gpg
+
+RUN echo \
+    "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] \
+    http://packages.ros.org/ros2/ubuntu \
+    $(. /etc/os-release && echo ${VERSION_CODENAME}) main" \
+    > /etc/apt/sources.list.d/ros2.list
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-jazzy-desktop \
-    python3-colcon-common-extensions \
     python3-rosdep \
+    python3-colcon-common-extensions \
     python3-vcstool \
     python3-argcomplete \
- && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/*
 
-RUN rosdep init || true && rosdep update
+RUN rosdep init || true
+RUN rosdep update || true
 
-# Source ROS for all shells
-RUN echo "source /opt/ros/jazzy/setup.bash" >> /etc/bash.bashrc
+ENV ROS_DISTRO=jazzy
 
-# =========================
-# Conda (Miniforge)
-# =========================
+
+# ============================================================
+# Miniforge / Conda
+#
+# Conda is available for auxiliary environments.
+# Isaac Sim itself continues using /isaac-sim/python.sh.
+# ============================================================
+
 WORKDIR /tmp
 
 RUN ARCH="$(dpkg --print-architecture)" && \
     if [ "${ARCH}" = "arm64" ]; then \
-      MINIFORGE_URL="https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-aarch64.sh"; \
+        MINIFORGE_URL="https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-aarch64.sh"; \
     else \
-      MINIFORGE_URL="https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh"; \
+        MINIFORGE_URL="https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh"; \
     fi && \
-    curl -L -o Miniforge3.sh "${MINIFORGE_URL}" && \
-    bash Miniforge3.sh -b -p /opt/conda && \
-    rm -f Miniforge3.sh && \
-    /opt/conda/bin/conda clean -a -y
+    curl -L "${MINIFORGE_URL}" -o /tmp/miniforge.sh && \
+    bash /tmp/miniforge.sh -b -p /opt/conda && \
+    rm /tmp/miniforge.sh && \
+    /opt/conda/bin/conda clean -afy
 
-# Make conda available (without forcing a workspace cd)
-ENV PATH=/opt/conda/bin:$PATH
-RUN conda init bash
+RUN /opt/conda/bin/conda config --system --set auto_activate_base false
 
-# =========================
-# Python venv + packages (your original setup)
-# =========================
-ENV VENV_PATH=/opt/venv
-RUN python -m venv "${VENV_PATH}"
-ENV PATH="${VENV_PATH}/bin:/opt/conda/bin:${PATH}"
+# Makes `conda activate ...` available without replacing Isaac Sim Python.
+RUN echo 'source /opt/conda/etc/profile.d/conda.sh' >> /etc/bash.bashrc
 
-RUN pip install --no-cache-dir --upgrade pip
 
-RUN pip install --no-cache-dir \
-    numpy scipy matplotlib tqdm \
-    jupyterlab ipykernel \
+# ============================================================
+# Isaac Lab
+#
+# Isaac Lab 3.0 -> Isaac Sim 6.1
+# ============================================================
+
+WORKDIR /opt
+
+RUN git clone \
+    --branch v3.0.0-EA \
+    --depth 1 \
+    https://github.com/isaac-sim/IsaacLab.git \
+    /opt/IsaacLab
+
+# Isaac Lab expects an Isaac Sim installation.
+RUN ln -s /isaac-sim /opt/IsaacLab/_isaac_sim
+
+WORKDIR /opt/IsaacLab
+
+RUN ./isaaclab.sh -i
+
+
+# ============================================================
+# BFM / dataset dependencies
+#
+# Install them into Isaac Sim's Python because this is the
+# Python environment that will run Isaac Lab + BFM together.
+# ============================================================
+
+RUN /isaac-sim/python.sh -m pip install --upgrade pip
+
+RUN /isaac-sim/python.sh -m pip install \
+    zarr \
+    numcodecs \
+    h5py \
     pandas \
-    transformers datasets accelerate
+    scipy \
+    matplotlib \
+    tqdm \
+    tensorboard \
+    pillow \
+    opencv-python-headless \
+    transformers \
+    datasets \
+    accelerate
 
-# PyTorch: use CUDA wheels on amd64; fallback to default wheels on arm64
-RUN ARCH="$(dpkg --print-architecture)" && \
-    if [ "${ARCH}" = "amd64" ]; then \
-      pip install --no-cache-dir torch torchvision torchaudio \
-        --index-url https://download.pytorch.org/whl/cu121 ; \
-    else \
-      pip install --no-cache-dir torch torchvision torchaudio ; \
-    fi
 
-WORKDIR /root
-CMD ["bash"]
+# ============================================================
+# Shell environment
+# ============================================================
+
+ENV ISAACLAB_PATH=/opt/IsaacLab
+ENV ACCEPT_EULA=Y
+ENV PRIVACY_CONSENT=Y
+ENV PYTHONUNBUFFERED=1
+
+RUN echo 'source /opt/ros/jazzy/setup.bash' >> /etc/bash.bashrc && \
+    echo 'source /opt/conda/etc/profile.d/conda.sh' >> /etc/bash.bashrc && \
+    echo 'export ISAACLAB_PATH=/opt/IsaacLab' >> /etc/bash.bashrc && \
+    echo "alias isaacpython='/isaac-sim/python.sh'" >> /etc/bash.bashrc && \
+    echo "alias isaaclab='/opt/IsaacLab/isaaclab.sh'" >> /etc/bash.bashrc
+
+
+# ============================================================
+# User workspace
+#
+# Nothing is copied here during build.
+# Mount your repositories here when starting a container.
+# ============================================================
+
+RUN mkdir -p /workspace
+
+WORKDIR /workspace
+
+
+# Clear Isaac Sim's inherited headless entrypoint.
+ENTRYPOINT []
+
+CMD ["/bin/bash"]
