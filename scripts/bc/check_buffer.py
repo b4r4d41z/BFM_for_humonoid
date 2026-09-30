@@ -14,7 +14,7 @@ _REPO_ROOT = _THIS_FILE.parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from bc.buffers.buffers import OfflineTrajectoryBuffer
+from bc.buffers.offline_buffer import OfflineTrajectoryBuffer
 from bc.data.hdf5_discovery import discover_h5_files, limit_h5_files, print_h5_dataset_summary
 
 

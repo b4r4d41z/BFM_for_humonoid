@@ -202,6 +202,11 @@ def validate_contract_metadata(meta: dict[str, Any], strict: bool = True) -> dic
     expected = get_default_contract_metadata()
     errors: list[str] = []
 
+    if "act_dim" in meta and "action_dim" in meta and int(meta["act_dim"]) != int(meta["action_dim"]):
+        errors.append(
+            f"act_dim={int(meta['act_dim'])} disagrees with action_dim={int(meta['action_dim'])}"
+        )
+
     def require_key(key: str) -> bool:
         if key not in canonical_meta:
             if strict:
@@ -438,7 +443,8 @@ def canonical_sample_description() -> dict[str, Any]:
             }
         },
         "reward": "scalar optional",
-        "done": "bool or scalar optional",
+        "done": "required bool; true exactly when this transition terminates its episode",
+        "timestamp": "finite scalar timestamp at transition timestep t",
         "meta": {
             "instruction": "str optional",
             "bag_name": "str optional",

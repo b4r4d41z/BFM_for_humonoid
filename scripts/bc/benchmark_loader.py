@@ -8,7 +8,7 @@ from time import perf_counter
 import torch
 from torch.utils.data import DataLoader
 
-from bc.buffers.buffers import OfflineTrajectoryBuffer
+from bc.buffers.offline_buffer import OfflineTrajectoryBuffer
 from bc.data.hdf5_discovery import discover_h5_files, limit_h5_files
 from bc.data.hdf5_streaming_dataset import HDF5StreamingDataset
 

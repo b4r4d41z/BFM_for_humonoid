@@ -45,6 +45,36 @@ def measure_dataset_hz(timestamps: Any) -> float:
     return float(1.0 / np.median(diffs))
 
 
+def validate_episode_timestamps(timestamps: Any, done: Any) -> None:
+    """Validate finite, strictly increasing timestamps inside each episode.
+
+    Timestamp resets are allowed only immediately after a terminal transition.
+    The final transition must be terminal so that episode membership is never
+    inferred from an unterminated file tail.
+    """
+
+    ts = np.asarray(timestamps, dtype=np.float64).reshape(-1)
+    done_arr = np.asarray(done, dtype=bool).reshape(-1)
+    if ts.shape[0] != done_arr.shape[0]:
+        raise ValueError(f"timestamps/done length mismatch: {ts.shape[0]} vs {done_arr.shape[0]}")
+    if ts.size == 0:
+        raise ValueError("episode data is empty")
+    if not np.all(np.isfinite(ts)):
+        raise ValueError("timestamps must contain only finite values")
+    if not done_arr[-1]:
+        raise ValueError("final transition must have done=True")
+
+    episode_start = 0
+    for terminal in np.flatnonzero(done_arr):
+        ep_ts = ts[episode_start : terminal + 1]
+        if ep_ts.size > 1 and np.any(np.diff(ep_ts) <= 0.0):
+            raise ValueError(
+                f"timestamps must be strictly increasing within episode "
+                f"[{episode_start}, {terminal}]"
+            )
+        episode_start = int(terminal) + 1
+
+
 def build_temporal_contract_metadata(actual_dataset_hz: float | None = None) -> dict[str, float]:
     meta = get_default_temporal_contract()
     meta["actual_dataset_hz"] = float(actual_dataset_hz) if actual_dataset_hz is not None else float("nan")
@@ -119,6 +149,7 @@ def find_future_target_indices(
     done_arr = np.asarray(done, dtype=bool).reshape(-1)
     if ts.shape[0] != done_arr.shape[0]:
         raise ValueError(f"timestamps/done length mismatch: {ts.shape[0]} vs {done_arr.shape[0]}")
+    validate_episode_timestamps(ts, done_arr)
     n = int(ts.shape[0])
     if n == 0:
         return []

@@ -5,9 +5,9 @@ from typing import Any
 
 import torch
 
-from bc.fb_cpr.model import ModelConfig
-from bc.model_blocks import MLPConfig, VisionEncoderConfig
-from bc.nn_models import TanhDiagGaussianPolicy
+from bc.policy.model import ModelConfig
+from bc.policy.blocks import MLPConfig, VisionEncoderConfig
+from bc.policy.legacy_policy import TanhDiagGaussianPolicy
 from bc.temporal import temporal_contract_from_checkpoint_meta, validate_runtime_temporal_contract
 
 
@@ -110,7 +110,7 @@ class BCPolicyRunner:
 
         try:
             cfg = ModelConfig(**fbcpr_kwargs)
-            from bc.fb_cpr.model import FBCPRModel
+            from bc.policy.model import FBCPRModel
 
             model = FBCPRModel(cfg)
             missing, unexpected = model.load_state_dict(state_dict, strict=False)
@@ -121,7 +121,7 @@ class BCPolicyRunner:
             if self.debug:
                 print(f"[BCPolicyRunner] FBCPRModel load failed: {fbcpr_err}")
 
-        # Fallback: minimal MLP Gaussian policy from bc.nn_models.
+        # Fallback: minimal MLP Gaussian policy from bc.policy.legacy_policy.
         obs_dim = model_kwargs.get("obs_dim")
         action_dim = model_kwargs.get("action_dim")
         hidden_dim = int(model_kwargs.get("hidden_dim", 256))

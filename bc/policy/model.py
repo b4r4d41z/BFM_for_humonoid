@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 import torch
 import torch.nn as nn
 
-from ..model_blocks import (
+from .blocks import (
     ConcatFusion,
     DeterministicPolicyHead,
     MLPConfig,

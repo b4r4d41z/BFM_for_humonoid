@@ -82,8 +82,8 @@ def main() -> None:
 
     # These imports would previously crash because they trigger `Test_training/__init__.py -> tasks -> omni`
     from bc.wrappers.isaaclab_env import IsaacLabEnvWrapper
-    from bc.fb_cpr.agent import FBCPRAgent, AgentConfig
-    from bc.fb_cpr.model import ModelConfig
+    from bc.policy.agent import FBCPRAgent, AgentConfig
+    from bc.policy.model import ModelConfig
 
     # 3) Create env after runtime is up
     env_raw = make_env(args)

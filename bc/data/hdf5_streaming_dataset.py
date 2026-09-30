@@ -11,7 +11,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 
-from bc.temporal import DEFAULT_TEMPORAL_CONTRACT, find_future_target_indices, measure_dataset_hz
+from bc.temporal import measure_dataset_hz, validate_episode_timestamps
 
 from .schema import (
     ACTION_ARM_DIM,
@@ -62,7 +62,14 @@ def _decode_cameras(cameras: str | list[str] | tuple[str, ...] | None) -> tuple[
 
 
 class HDF5StreamingDataset(Dataset):
-    """Lightweight streaming HDF5 dataset for offline BC training.
+    """Lightweight streaming HDF5 dataset of canonical one-step transitions.
+
+    At index ``t``, ``obs`` and ``next_obs`` come from ``/obs/state[t]`` and
+    ``/next_obs/state[t]``; ``action`` comes from ``/act/action[t]``; and
+    ``done`` and ``timestamp`` come from their datasets at ``t``.  The two
+    component action datasets are validation copies: they must concatenate to
+    ``/act/action``. Future-horizon state targets are deliberately not actions;
+    callers needing them should use :func:`bc.temporal.find_future_target_indices`.
 
     The constructor opens each HDF5 file only briefly to validate shapes and build
     an index of ``(file_id, timestep)`` entries. Persistent ``h5py.File`` handles
@@ -112,21 +119,15 @@ class HDF5StreamingDataset(Dataset):
         for file_id, path in enumerate(_progress(self.hdf5_paths, total=len(self.hdf5_paths), desc="scan h5")):
             with h5py.File(path, "r") as f:
                 frames = self._validate_file(f, path)
-                target_pairs = find_future_target_indices(
-                    f[PATHS.timestamps][()],
-                    f[PATHS.done][()],
-                    horizon_s=DEFAULT_TEMPORAL_CONTRACT.prediction_horizon_s,
-                )
                 actual_hz = measure_dataset_hz(f[PATHS.timestamps][()])
-            self.file_infos.append(HDF5FileInfo(path=path, frames=frames, valid_samples=len(target_pairs), actual_dataset_hz=actual_hz))
+            self.file_infos.append(HDF5FileInfo(path=path, frames=frames, valid_samples=frames, actual_dataset_hz=actual_hz))
             if self.seq_len != 1:
                 raise ValueError(
-                    "Temporal horizon target selection currently supports seq_len=1; "
+                    "Canonical transition streaming currently supports seq_len=1; "
                     f"got seq_len={self.seq_len}."
                 )
-            for sample_idx, (t, target_t) in enumerate(target_pairs):
-                if sample_idx % self.frame_stride == 0:
-                    self.index.append((file_id, t, target_t))
+            for t in range(0, frames, self.frame_stride):
+                self.index.append((file_id, t, t))
         elapsed = perf_counter() - start
         print(
             f"{self.log_prefix} index ready: files={len(self.file_infos)} samples={len(self.index)} "
@@ -178,8 +179,35 @@ class HDF5StreamingDataset(Dataset):
                 raise ValueError(f"{path}: {key} must have shape [N, {expected_dim}], got {tuple(f[key].shape)}")
 
         raw_meta = self._read_contract_meta(f)
+        self._require_ordering_metadata(raw_meta, path)
         fill_and_validate_contract_metadata(raw_meta, context=f"{path}/meta", warn=True)
+        done = np.asarray(f[PATHS.done][()], dtype=bool)
+        validate_episode_timestamps(f[PATHS.timestamps][()], done)
+
+        action = np.asarray(f[PATHS.act_action][()], dtype=np.float32)
+        components = np.concatenate(
+            [f[PATHS.act_joint_target][()], f[PATHS.act_hand_target][()]], axis=1
+        ).astype(np.float32)
+        if not np.allclose(action, components, rtol=1e-5, atol=1e-6):
+            raise ValueError(
+                f"{path}: {PATHS.act_action} is inconsistent with concatenated "
+                f"{PATHS.act_joint_target} + {PATHS.act_hand_target}; cannot choose an action silently"
+            )
+        obs = np.asarray(f[PATHS.obs_state][()], dtype=np.float32)
+        next_obs = np.asarray(f[PATHS.next_obs_state][()], dtype=np.float32)
+        nonterminal = np.flatnonzero(~done[:-1])
+        if nonterminal.size and not np.allclose(next_obs[nonterminal], obs[nonterminal + 1], rtol=1e-5, atol=1e-6):
+            raise ValueError(f"{path}: {PATHS.next_obs_state}[t] must equal {PATHS.obs_state}[t+1] for non-terminal transitions")
         return frames
+
+    @staticmethod
+    def _require_ordering_metadata(meta: dict[str, Any], path: str) -> None:
+        required = ("obs_dim", "arm_joint_names", "hand_value_names")
+        missing = [key for key in required if key not in meta]
+        if "action_dim" not in meta and "act_dim" not in meta:
+            missing.append("action_dim (or legacy act_dim)")
+        if missing:
+            raise ValueError(f"{path}: missing metadata required to validate 26D ordering: {', '.join(missing)}")
 
     def _get_h5(self, file_id: int) -> h5py.File:
         handle = self._handles.get(file_id)
@@ -272,12 +300,11 @@ class HDF5StreamingDataset(Dataset):
             self._dummy_image_cache = torch.zeros((size, size, 3), dtype=torch.uint8)
         return self._dummy_image_cache.clone()
 
-    def _read_one(self, file_id: int, t: int, target_t: int | None = None) -> dict[str, Any]:
+    def _read_one(self, file_id: int, t: int) -> dict[str, Any]:
         f = self._get_h5(file_id)
         obs_full = np.asarray(f[PATHS.obs_state][t], dtype=np.float32)
         next_obs_full = np.asarray(f[PATHS.next_obs_state][t], dtype=np.float32)
-        target_t = t if target_t is None else int(target_t)
-        act_full = np.asarray(f[PATHS.obs_state][target_t], dtype=np.float32)
+        act_full = np.asarray(f[PATHS.act_action][t], dtype=np.float32)
         obs_state = split_state_vector(obs_full)
         next_obs_state = split_state_vector(next_obs_full)
         act_state = split_action_vector(act_full)
@@ -291,6 +318,7 @@ class HDF5StreamingDataset(Dataset):
             },
             "next_obs": {"state": {k: torch.from_numpy(np.asarray(v, dtype=np.float32)) for k, v in next_obs_state.items()}},
             "done": torch.tensor(bool(np.asarray(f[PATHS.done][t])), dtype=torch.bool),
+            "timestamp": torch.tensor(float(np.asarray(f[PATHS.timestamps][t])), dtype=torch.float64),
         }
         if PATHS.reward in f:
             sample["reward"] = torch.tensor(float(np.asarray(f[PATHS.reward][t])), dtype=torch.float32)
@@ -316,10 +344,10 @@ class HDF5StreamingDataset(Dataset):
         return sample
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
-        file_id, start, target_t = self.index[idx]
+        file_id, start, _ = self.index[idx]
         if self.seq_len == 1:
-            return self._read_one(file_id, start, target_t)
-        items = [self._read_one(file_id, start + offset, target_t + offset) for offset in range(self.seq_len)]
+            return self._read_one(file_id, start)
+        items = [self._read_one(file_id, start + offset) for offset in range(self.seq_len)]
         return _stack_sequence(items)
 
     def close(self) -> None:

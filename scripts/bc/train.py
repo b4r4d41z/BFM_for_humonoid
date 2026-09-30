@@ -16,11 +16,11 @@ import numpy as np
 from torch.utils.data import DataLoader
 
 
-from bc.buffers.buffers import OfflineTrajectoryBuffer
+from bc.buffers.offline_buffer import OfflineTrajectoryBuffer
 from bc.data.hdf5_discovery import discover_h5_files, limit_h5_files, print_h5_dataset_summary
 from bc.data.hdf5_streaming_dataset import HDF5StreamingDataset
-from bc.fb_cpr.agent import AgentConfig, FBCPRAgent, TrainConfig
-from bc.fb_cpr.model import ModelConfig
+from bc.policy.agent import AgentConfig, FBCPRAgent, TrainConfig
+from bc.policy.model import ModelConfig
 from bc.temporal import build_temporal_contract_metadata, DEFAULT_TEMPORAL_CONTRACT, measure_dataset_hz
 from bc.data.schema import PATHS
 
