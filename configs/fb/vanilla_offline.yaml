@@ -1,0 +1,27 @@
+# Run from repository root. The manifest must contain measured schema-v2 episodes.
+dataset_manifest: data/bfm/manifest.json
+output_dir: runs/fb/vanilla
+seed: 0
+device: cpu
+batch_size: 256
+training_steps: 100000
+checkpoint_interval: 10000
+logging_interval: 100
+reference_count: 4096
+reference_seed: 17
+model:
+  state_dim: 28
+  action_dim: 8
+  latent_dim: 32
+  hidden_dim: 256
+  hidden_layers: 2
+  actor_std: 0.2
+  noise_clip: 0.3
+train:
+  discount: 0.99
+  tau: 0.01
+  learning_rate_fb: 0.0001
+  learning_rate_actor: 0.0001
+  orthonormalization_coefficient: 1.0
+  gradient_clip_norm: 10.0
+  fb_pessimism: 0.0

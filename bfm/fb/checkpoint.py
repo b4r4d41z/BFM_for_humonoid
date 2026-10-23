@@ -1,0 +1,85 @@
+from dataclasses import asdict
+import os
+from pathlib import Path
+import random
+import uuid
+
+import numpy as np
+import torch
+
+from bfm.contracts.kuavo import KuavoContract, STATE_DIM, STATE_FIELDS
+from bfm.data.schema import SCHEMA_VERSION
+from .model import FBModel, ModelConfig
+
+
+def rng_state():
+    n = np.random.get_state()
+    return {"torch": torch.get_rng_state(), "cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else [],
+            "python": random.getstate(), "numpy": (n[0], n[1].tolist(), n[2], n[3], n[4])}
+
+
+def restore_rng(state):
+    torch.set_rng_state(state["torch"].cpu())
+    if state["cuda"] and torch.cuda.is_available():
+        torch.cuda.set_rng_state_all(state["cuda"])
+    random.setstate(state["python"])
+    n = state["numpy"]
+    np.random.set_state((n[0], np.asarray(n[1], dtype=np.uint32), *n[2:]))
+
+
+def save_checkpoint(path, agent, replay, dataset, reference_states, reference_indices, run_config):
+    payload = {
+        "format": "vanilla_fb_v1", "schema_version": SCHEMA_VERSION,
+        "model_config": asdict(agent.model.cfg), "train_config": asdict(agent.cfg),
+        "model": agent.model.state_dict(), "target_F": agent.target_F.state_dict(), "target_B": agent.target_B.state_dict(),
+        "fb_optimizer": agent.fb_optimizer.state_dict(), "actor_optimizer": agent.actor_optimizer.state_dict(),
+        "step": agent.step, "rng": rng_state(), "replay_rng": replay.state_dict(),
+        "contract": dataset.contract.to_dict(), "state_fields": list(STATE_FIELDS),
+        "dataset_fingerprint": dataset.fingerprint, "training_episode_ids": dataset.ids,
+        "dataset_manifest": dataset.manifest, "run_config": run_config,
+        "reference_states": reference_states.cpu(), "reference_indices": reference_indices,
+    }
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}-{uuid.uuid4().hex}")
+    try:
+        torch.save(payload, tmp)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def load_payload(path):
+    payload = torch.load(path, map_location="cpu", weights_only=True)
+    if payload.get("format") != "vanilla_fb_v1" or payload.get("schema_version") != SCHEMA_VERSION:
+        raise ValueError("Unsupported FB checkpoint/schema")
+    if payload.get("state_fields") != list(STATE_FIELDS):
+        raise ValueError("Checkpoint state ordering mismatch")
+    cfg = ModelConfig(**payload["model_config"])
+    if (cfg.state_dim, cfg.action_dim) != (STATE_DIM, 8):
+        raise ValueError("Checkpoint does not match KUAVO state/action view")
+    KuavoContract(**payload["contract"])
+    return payload
+
+
+def load_model(path, device="cpu"):
+    payload = load_payload(path)
+    model = FBModel(ModelConfig(**payload["model_config"])).to(device)
+    model.load_state_dict(payload["model"])
+    model.eval().requires_grad_(False)
+    return model, payload
+
+
+def resume_agent(payload, agent, replay, dataset):
+    if payload["dataset_fingerprint"] != dataset.fingerprint or payload["contract"] != dataset.contract.to_dict():
+        raise ValueError("Resume dataset/contract differs from checkpoint")
+    if payload["model_config"] != asdict(agent.model.cfg) or payload["train_config"] != asdict(agent.cfg):
+        raise ValueError("Resume architecture or optimizer configuration mismatch")
+    agent.model.load_state_dict(payload["model"])
+    agent.target_F.load_state_dict(payload["target_F"])
+    agent.target_B.load_state_dict(payload["target_B"])
+    agent.fb_optimizer.load_state_dict(payload["fb_optimizer"])
+    agent.actor_optimizer.load_state_dict(payload["actor_optimizer"])
+    agent.step = payload["step"]
+    replay.load_state_dict(payload["replay_rng"])
+    restore_rng(payload["rng"])

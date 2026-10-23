@@ -77,8 +77,9 @@ _build
 # Teleop Recorded Dataset
 datasets
 
-# Tests
-tests/
+# Keep the new FB source tests versioned; retain other local test exclusions.
+tests/*
+!tests/fb/
 
 # Docker history
 .isaac-lab-docker-history
