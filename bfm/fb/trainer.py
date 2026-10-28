@@ -15,7 +15,7 @@ from .checkpoint import save_checkpoint, load_payload, resume_agent
 
 
 def train(config, *, resume=None):
-    allowed = {"dataset_manifest", "output_dir", "seed", "device", "batch_size", "training_steps",
+    allowed = {"dataset_schema", "dataset_manifest", "output_dir", "seed", "device", "batch_size", "training_steps",
                "checkpoint_interval", "logging_interval", "reference_count", "reference_seed", "model", "train"}
     if set(config) - allowed:
         raise ValueError(f"Unknown training keys: {set(config)-allowed}")
@@ -30,9 +30,17 @@ def train(config, *, resume=None):
     output.mkdir(parents=True, exist_ok=True)
     if not resume and (output / "metrics.jsonl").exists():
         raise FileExistsError("Output already contains a run; use --resume or a new output directory")
-    data = BFMDataset(cfg["dataset_manifest"], split="train")
+    schema = cfg.get("dataset_schema", "measured_v2")  # Explicit old programmatic compatibility.
+    if schema == "sharpa_v3":
+        from bfm.data.sharpa import SharpaDataset
+        data = SharpaDataset(cfg["dataset_manifest"], split="train")
+    elif schema == "measured_v2":
+        data = BFMDataset(cfg["dataset_manifest"], split="train")
+    else:
+        raise ValueError("dataset_schema must be sharpa_v3 or legacy measured_v2")
     replay = BFMReplayBuffer(data.episodes, cfg["seed"])
-    model_cfg = ModelConfig(**cfg["model"])
+    model_cfg = ModelConfig(**{"state_dim": replay.data["observation"].shape[-1],
+                               "action_dim": replay.data["action"].shape[-1], **cfg["model"]})
     if model_cfg.state_dim != replay.data["observation"].shape[-1] or model_cfg.action_dim != replay.data["action"].shape[-1]:
         raise ValueError("Model dimensions disagree with measured dataset")
     agent = FBAgent(model_cfg, TrainConfig(**cfg["train"]), cfg["device"])

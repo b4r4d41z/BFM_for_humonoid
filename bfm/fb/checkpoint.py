@@ -29,12 +29,13 @@ def restore_rng(state):
 
 def save_checkpoint(path, agent, replay, dataset, reference_states, reference_indices, run_config):
     payload = {
-        "format": "vanilla_fb_v1", "schema_version": SCHEMA_VERSION,
+        "format": "vanilla_fb_sharpa_v3" if getattr(dataset, "schema_version", None) == "3.0.0" else "vanilla_fb_v1",
+        "schema_version": getattr(dataset, "schema_version", SCHEMA_VERSION),
         "model_config": asdict(agent.model.cfg), "train_config": asdict(agent.cfg),
         "model": agent.model.state_dict(), "target_F": agent.target_F.state_dict(), "target_B": agent.target_B.state_dict(),
         "fb_optimizer": agent.fb_optimizer.state_dict(), "actor_optimizer": agent.actor_optimizer.state_dict(),
         "step": agent.step, "rng": rng_state(), "replay_rng": replay.state_dict(),
-        "contract": dataset.contract.to_dict(), "state_fields": list(STATE_FIELDS),
+        "contract": dataset.contract.to_dict(), "state_fields": getattr(dataset, "state_fields", list(STATE_FIELDS)),
         "dataset_fingerprint": dataset.fingerprint, "training_episode_ids": dataset.ids,
         "dataset_manifest": dataset.manifest, "run_config": run_config,
         "reference_states": reference_states.cpu(), "reference_indices": reference_indices,
@@ -51,6 +52,14 @@ def save_checkpoint(path, agent, replay, dataset, reference_states, reference_in
 
 def load_payload(path):
     payload = torch.load(path, map_location="cpu", weights_only=True)
+    if payload.get("format") == "vanilla_fb_sharpa_v3":
+        from bfm.contracts.sharpa import SharpaContract, VERSION, FIELDS
+        if payload.get("schema_version") != VERSION or payload.get("contract") != SharpaContract().to_dict() or payload.get("state_fields") != list(FIELDS):
+            raise ValueError("Sharpa checkpoint contract/order mismatch")
+        cfg = ModelConfig(**payload["model_config"])
+        if (cfg.state_dim, cfg.action_dim) != (56, 26):
+            raise ValueError("Sharpa task56 checkpoint requires 56D states and 26D actions")
+        return payload
     if payload.get("format") != "vanilla_fb_v1" or payload.get("schema_version") != SCHEMA_VERSION:
         raise ValueError("Unsupported FB checkpoint/schema")
     if payload.get("state_fields") != list(STATE_FIELDS):

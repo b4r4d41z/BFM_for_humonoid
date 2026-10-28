@@ -9,6 +9,8 @@ from .policy_scheduler import PolicyScheduler
 class BFMPolicyRunner:
     def __init__(self, checkpoint_path, device="cpu", env_device=None, env_joint_names=ARM_JOINTS):
         self.model, self.checkpoint = load_model(checkpoint_path, device)
+        if self.checkpoint["format"] != "vanilla_fb_v1":
+            raise ValueError("Old IsaacLab/claw runner cannot execute Sharpa checkpoints; use scripts/run_sharpa_fb.py")
         self.contract = KuavoContract(**self.checkpoint["contract"])
         self.states = BFMStateAdapter()
         self.actions = BFMActionAdapter(self.contract, env_joint_names, env_device or device)
