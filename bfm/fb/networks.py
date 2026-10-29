@@ -1,4 +1,4 @@
-"""Small MLPs for Vanilla FB; no vision encoder or imitation objective."""
+"""Small MLP heads for Vanilla FB; no imitation objective."""
 import torch
 from torch import nn
 

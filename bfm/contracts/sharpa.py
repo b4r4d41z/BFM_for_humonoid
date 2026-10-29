@@ -1,4 +1,4 @@
-"""Current collection contract v2; legacy kuavo.py is explicitly unrelated."""
+"""Collection v3 bounded commands; legacy kuavo.py is explicitly unrelated."""
 from dataclasses import dataclass
 import numpy as np
 import torch
@@ -95,7 +95,8 @@ class SharpaContract:
     policy_dt: float = .1
 
     def to_dict(self):
-        return {"version": 2, "profile": PROFILE, "policy_dt": self.policy_dt,
+        return {"version": 3, "profile": PROFILE, "policy_dt": self.policy_dt,
+                "arm_semantics": "bounded_absolute_joint_position_target_post_clamp",
                 "groups": list(GROUPS), "joints": {k: list(v) for k, v in JOINTS.items()},
                 "low": LOW, "high": HIGH, "bounds_source_commit": SOURCE_COMMIT,
                 "bounds_source_path": "models/robots/s40_sharpa/assembly/s40_sharpa_two_cameras.xml",

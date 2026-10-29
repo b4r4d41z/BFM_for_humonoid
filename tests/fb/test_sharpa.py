@@ -9,7 +9,7 @@ import torch
 import zarr
 import yaml
 from bfm.contracts.sharpa import *
-from bfm.data.mcap import ACTION, TOPICS, build, convert, decode_image
+from bfm.data.mcap import ACTION, TOPICS, HELD, RAW_ARM, build, convert, decode_image
 from bfm.data.sharpa import validate, write, SharpaDataset
 from bfm.fb.trainer import train
 from bfm.sharpa_runtime import SharpaRunner, fill_messages
@@ -30,23 +30,35 @@ def source():
         setattr(action, f"{side}_arm_joint_names", list(JOINTS[side]))
     for group, sl in GROUPS.items():
         setattr(action, f"{group}_target", physical[sl].tolist())
-    names = list(JOINTS["left"]+JOINTS["right"])+["left_thumb_IP", "right_thumb_IP"]
+    from bfm.contracts.vision import PROPRIO_JOINTS
+    names = list(reversed(PROPRIO_JOINTS))  # Exercise lookup, never assume storage offsets.
     image = NS(header=header(), height=2, width=2, encoding="bgr8", is_bigendian=1,
                step=8, data=bytes([1, 2, 3, 4, 5, 6, 99, 99]*2))
     joint = NS(header=header(), name=names, position=[0.]*len(names), velocity=[0.]*len(names), effort=[])
-    records = {k: [] for k in (ACTION, *TOPICS)}
+    records = {k: [] for k in (ACTION, *TOPICS, *HELD, RAW_ARM)}
     for i in range(10):
         t = 1_793_156_940_000_000_000 + i*100_000_000
         measured = NS(header=header(), **copy.deepcopy(state))
         measured.right_arm_position[0] = i*.01
         records[ACTION].append((t, copy.deepcopy(action)))
+        arm, hand, _ = fill_messages(physical, NS(header=header()), NS(header=header()), NS())
+        arm.header.stamp.nanosec = i
+        records[HELD[0]].append((t+1_000, arm))
+        records[HELD[1]].append((t+2_000, hand))
+        records[RAW_ARM].append((t-94_850_000, copy.deepcopy(arm)))
         for topic, msg in zip(TOPICS, [measured, joint, image, image, image]):
             records[topic].append((t-1_000_000, copy.deepcopy(msg)))
-    semantics = {f"{s}_arm": {"joint_names": list(j), "unit": "rad", "dim": 7, "type": "absolute_joint_position_target"} for s, j in JOINTS.items()}
+    semantics = {f"{s}_arm": {"joint_names": list(j), "unit": "rad", "dim": 7, "type": "bounded_absolute_joint_position_target"} for s, j in JOINTS.items()}
     semantics.update({f"{s}_hand": {"unit": "controller_0_100", "range": [0, 100], "dim": 6, "type": "logical_hand_target"} for s in JOINTS})
     metadata = {"time": {"synchronization_source": "rosbag_record_timestamp"}, "success": None,
-                "bfm": {"contract_version": 2, "action_dim": 26, "action_group_order": list(GROUPS), "policy_hz": 10.,
+                "bfm": {"contract_version": 3, "action_dim": 26, "action_group_order": list(GROUPS), "policy_hz": 10.,
                         "action_semantics": semantics, "task_state": {"frame": "world"}, "episode": {"episode_id": "generated"}}}
+    idx = list(range(7)) + list(range(13,20))
+    metadata['bfm']['arm_target_processing'] = {
+        'clamping_enabled': True, 'transformation': 'per_joint_saturation', 'unit': 'rad',
+        'source_topic': RAW_ARM, 'controller_topic': HELD[0], 'canonical_action_topic': ACTION,
+        'joint_limits': {name: [LOW[i], HIGH[i]] for name,i in zip(JOINTS['left']+JOINTS['right'],idx)},
+        'bounds_source': SharpaContract().to_dict()['bounds_source_path'], 'bounds_source_sha256': MODEL_SHA256}
     return records, metadata
 
 
@@ -105,6 +117,8 @@ def test_zarr_dataset_model_checkpoint_and_runtime(source, tmp_path):
               'batch_size':4,'training_steps':4,'logging_interval':1,'checkpoint_interval':2,
               'model':{'state_dim':56,'action_dim':26,'hidden_dim':16,'latent_dim':4}}
     checkpoint = train(config)
+    with pytest.raises(ValueError, match='profile'):
+        SharpaRunner(checkpoint, observation_profile='vision_proprio_v1')
     runner = SharpaRunner(checkpoint)
     action = runner.act(source[0][TOPICS[0]][0][1])
     assert action.shape == (26,) and np.isfinite(action).all()
@@ -142,9 +156,10 @@ def test_missing_topics_and_held_command_checks(source):
     with pytest.raises(ValueError, match='Missing required topic'): make((records,meta))
     records, meta = copy.deepcopy(source)
     records['/robot_arm_joint_command'] = []
-    for t, action in records[ACTION]:
+    for i, (t, action) in enumerate(records[ACTION]):
         a = flatten_action(action)
-        arm, _, _ = fill_messages(a,NS(),NS(),NS())
+        arm, _, _ = fill_messages(a,NS(header=header()),NS(),NS())
+        arm.header.stamp.nanosec = i
         records['/robot_arm_joint_command'].append((t,arm))
     assert make((records,meta))[1]['held_command_checks']['/robot_arm_joint_command']==10
     records['/robot_arm_joint_command'][0][1].position[0] += .5
@@ -163,6 +178,8 @@ def test_real_embedded_schema_cdr_mcap_reader(source,tmp_path):
     defs = {ACTION:'std_msgs/Header header\n'+''.join(f'string[7] {s}_arm_joint_names\nfloat64[7] {s}_arm_target\nfloat64[6] {s}_hand_target\n' for s in JOINTS),
             TOPICS[0]:'std_msgs/Header header\n'+''.join(f'float64[{w}] {k}\n' for k,(w,_) in FIELDS.items()),
             TOPICS[1]:'std_msgs/Header header\nstring[] name\nfloat64[] position\nfloat64[] velocity\nfloat64[] effort\n'}
+    defs[HELD[0]] = defs[RAW_ARM] = 'std_msgs/Header header\nstring[] name\nfloat64[] position\n'
+    defs[HELD[1]] = 'std_msgs/Header header\nuint8[6] left_hand_position\nuint8[6] right_hand_position\n'
     for topic in TOPICS[2:]:
         defs[topic]='std_msgs/Header header\nuint32 height\nuint32 width\nstring encoding\nuint8 is_bigendian\nuint32 step\nuint8[] data\n'
     def dictionary(v):

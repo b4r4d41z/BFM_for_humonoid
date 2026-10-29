@@ -13,6 +13,7 @@ def main():
     p.add_argument("--output", help="One output .zarr for one input")
     p.add_argument("--output-dir", help="Batch output directory")
     p.add_argument("--collection-commit")
+    p.add_argument("--max-camera-skew", type=float, default=None, help="Optional inter-camera skew limit, seconds")
     p.add_argument("--max-ages", nargs=5, type=float, metavar=("STATE", "JOINT", "HEAD", "LEFT", "RIGHT"))
     p.add_argument("--validate", metavar="ZARR")
     p.add_argument("--manifest", help="Create manifest only; assign episodes below explicitly")
@@ -51,7 +52,8 @@ def main():
     from bfm.data.mcap import convert
     for episode in a.episodes:
         output = a.output or str(Path(a.output_dir)/(Path(episode).name + '.zarr'))
-        print(convert(episode, output, max_age_s=a.max_ages, collection_commit=a.collection_commit))
+        print(convert(episode, output, max_age_s=a.max_ages, collection_commit=a.collection_commit,
+                      max_camera_skew_s=a.max_camera_skew))
 
 
 if __name__ == "__main__":

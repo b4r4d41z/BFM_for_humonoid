@@ -16,7 +16,8 @@ from .checkpoint import save_checkpoint, load_payload, resume_agent
 
 def train(config, *, resume=None):
     allowed = {"dataset_schema", "dataset_manifest", "output_dir", "seed", "device", "batch_size", "training_steps",
-               "checkpoint_interval", "logging_interval", "reference_count", "reference_seed", "model", "train"}
+               "checkpoint_interval", "logging_interval", "reference_count", "reference_seed", "model", "train",
+               "observation_profile", "vision", "outcome"}
     if set(config) - allowed:
         raise ValueError(f"Unknown training keys: {set(config)-allowed}")
     cfg = {"seed": 0, "device": "cpu", "batch_size": 256, "training_steps": 100000,
@@ -31,22 +32,46 @@ def train(config, *, resume=None):
     if not resume and (output / "metrics.jsonl").exists():
         raise FileExistsError("Output already contains a run; use --resume or a new output directory")
     schema = cfg.get("dataset_schema", "measured_v2")  # Explicit old programmatic compatibility.
+    profile = cfg.get('observation_profile', 'task56')
+    visual = profile == 'vision_proprio_v1'
+    if profile not in ('task56', 'vision_proprio_v1') or (visual and schema != 'sharpa_v3'):
+        raise ValueError('Observation profile incompatible with dataset schema')
     if schema == "sharpa_v3":
         from bfm.data.sharpa import SharpaDataset
-        data = SharpaDataset(cfg["dataset_manifest"], split="train")
+        data = SharpaDataset(cfg["dataset_manifest"], split="train", observation_profile=profile, outcome=cfg.get('outcome', 'all'))
     elif schema == "measured_v2":
         data = BFMDataset(cfg["dataset_manifest"], split="train")
     else:
         raise ValueError("dataset_schema must be sharpa_v3 or legacy measured_v2")
-    replay = BFMReplayBuffer(data.episodes, cfg["seed"])
-    model_cfg = ModelConfig(**{"state_dim": replay.data["observation"].shape[-1],
-                               "action_dim": replay.data["action"].shape[-1], **cfg["model"]})
-    if model_cfg.state_dim != replay.data["observation"].shape[-1] or model_cfg.action_dim != replay.data["action"].shape[-1]:
+    if visual:
+        from bfm.data.visual_replay import VisualReplayBuffer
+        from .observation import VisionConfig
+        vision = asdict(VisionConfig(**cfg.get('vision', {})))
+        replay = VisualReplayBuffer(data, cfg['seed'], cameras=vision['cameras'])
+        state_dim = vision['embedding_dim']
+    else:
+        if cfg.get('vision'):
+            raise ValueError('task56 cannot have vision configuration')
+        replay = BFMReplayBuffer(data.episodes, cfg["seed"])
+        vision, state_dim = {}, replay.data['observation'].shape[-1]
+    requested = {"state_dim": state_dim, "action_dim": replay.data['action'].shape[-1],
+                 **cfg['model'], 'observation_profile': profile, 'vision': vision}
+    if requested['state_dim'] != state_dim or requested['action_dim'] != replay.data['action'].shape[-1]:
         raise ValueError("Model dimensions disagree with measured dataset")
-    agent = FBAgent(model_cfg, TrainConfig(**cfg["train"]), cfg["device"])
+    payload = load_payload(resume) if resume else None
+    if payload and visual:
+        # Reuse checkpoint-contained weights without redownloading the backbone.
+        saved = payload['model_config']['vision']
+        for k, value in cfg.get('vision', {}).items():
+            if k == 'revision' and value == payload['run_config'].get('vision', {}).get('revision'):
+                continue  # Original requested alias already resolved in model_config.
+            if saved.get(k) != value:
+                raise ValueError(f'Resume visual configuration mismatch: {k}')
+        requested['vision'] = saved
+    model_cfg = ModelConfig(**requested)
+    agent = FBAgent(model_cfg, TrainConfig(**cfg["train"]), cfg["device"], initialize_pretrained=not bool(resume))
     refs, ref_ids = replay.reference_states(cfg["reference_count"], cfg["reference_seed"])
     if resume:
-        payload = load_payload(resume)
         for k in ("batch_size", "seed", "reference_count", "reference_seed"):
             if payload["run_config"][k] != cfg[k]:
                 raise ValueError(f"Resume changes deterministic setting {k}")
@@ -57,6 +82,7 @@ def train(config, *, resume=None):
     else:
         agent.model.normalizer.fit(torch.cat((replay.data["observation"], replay.data["next_observation"])))
     cfg["model"], cfg["train"] = asdict(agent.model.cfg), asdict(agent.cfg)
+    cfg['observation_profile'] = profile
     (output / "config.json").write_text(json.dumps(cfg, indent=2))
     with (output / "metrics.jsonl").open("a") as log:
         while agent.step < cfg["training_steps"]:

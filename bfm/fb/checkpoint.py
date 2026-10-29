@@ -40,6 +40,16 @@ def save_checkpoint(path, agent, replay, dataset, reference_states, reference_in
         "dataset_manifest": dataset.manifest, "run_config": run_config,
         "reference_states": reference_states.cpu(), "reference_indices": reference_indices,
     }
+    payload['observation_profile'] = agent.model.cfg.observation_profile
+    if agent.model.observation_encoder is not None:
+        payload['observation_identity'] = agent.model.observation_encoder.identity()
+        payload['target_fusion'] = agent.target_fusion.state_dict()
+        # Compact backward reference embeddings are enough for reward inference;
+        # avoid embedding thousands of raw RGB frames in every checkpoint.
+        with torch.no_grad():
+            payload['reference_backward'] = torch.cat([
+                agent.model.backward_map(replay.observations(reference_indices[i:i+32], 'next_obs')).cpu()
+                for i in range(0, len(reference_indices), 32)])
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}-{uuid.uuid4().hex}")
@@ -57,7 +67,18 @@ def load_payload(path):
         if payload.get("schema_version") != VERSION or payload.get("contract") != SharpaContract().to_dict() or payload.get("state_fields") != list(FIELDS):
             raise ValueError("Sharpa checkpoint contract/order mismatch")
         cfg = ModelConfig(**payload["model_config"])
-        if (cfg.state_dim, cfg.action_dim) != (56, 26):
+        if payload.get('observation_profile') != cfg.observation_profile:
+            raise ValueError('Checkpoint observation profile mismatch; old collection-v2 checkpoints are unsupported')
+        if cfg.observation_profile == 'vision_proprio_v1':
+            from .observation import VisionConfig
+            vision = asdict(VisionConfig(**cfg.vision))
+            if payload.get('observation_identity') != {'observation_profile': cfg.observation_profile, **vision}:
+                raise ValueError('Checkpoint visual configuration/identity mismatch')
+            if cfg.state_dim != vision['embedding_dim'] or cfg.action_dim != 26:
+                raise ValueError('Visual embedding/action dimension mismatch')
+            if payload.get('reference_backward') is None or 'target_fusion' not in payload:
+                raise ValueError('Visual checkpoint missing reward references/target fusion')
+        elif (cfg.state_dim, cfg.action_dim) != (56, 26):
             raise ValueError("Sharpa task56 checkpoint requires 56D states and 26D actions")
         return payload
     if payload.get("format") != "vanilla_fb_v1" or payload.get("schema_version") != SCHEMA_VERSION:
@@ -71,10 +92,19 @@ def load_payload(path):
     return payload
 
 
-def load_model(path, device="cpu"):
+def load_model(path, device="cpu", *, expected_profile=None, expected_vision=None):
     payload = load_payload(path)
-    model = FBModel(ModelConfig(**payload["model_config"])).to(device)
+    cfg = ModelConfig(**payload['model_config'])
+    if expected_profile is not None and expected_profile != cfg.observation_profile:
+        raise ValueError('Checkpoint observation profile differs from requested runtime')
+    if expected_vision is not None and expected_vision != cfg.vision:
+        raise ValueError('Checkpoint visual configuration differs from requested runtime')
+    model = FBModel(cfg, initialize_pretrained=False).to(device)
     model.load_state_dict(payload["model"])
+    if model.observation_encoder is not None:
+        from .observation import weights_digest
+        if weights_digest(model.observation_encoder.backbone) != cfg.vision['weights_sha256']:
+            raise ValueError('Frozen backbone weights checksum mismatch')
     model.eval().requires_grad_(False)
     return model, payload
 
@@ -82,11 +112,18 @@ def load_model(path, device="cpu"):
 def resume_agent(payload, agent, replay, dataset):
     if payload["dataset_fingerprint"] != dataset.fingerprint or payload["contract"] != dataset.contract.to_dict():
         raise ValueError("Resume dataset/contract differs from checkpoint")
-    if payload["model_config"] != asdict(agent.model.cfg) or payload["train_config"] != asdict(agent.cfg):
+    # Default the new profile fields for pre-existing legacy KUAVO checkpoints.
+    if asdict(ModelConfig(**payload["model_config"])) != asdict(agent.model.cfg) or payload["train_config"] != asdict(agent.cfg):
         raise ValueError("Resume architecture or optimizer configuration mismatch")
     agent.model.load_state_dict(payload["model"])
+    if agent.model.observation_encoder is not None:
+        from .observation import weights_digest
+        if weights_digest(agent.model.observation_encoder.backbone) != agent.model.cfg.vision['weights_sha256']:
+            raise ValueError('Resume frozen backbone weights checksum mismatch')
     agent.target_F.load_state_dict(payload["target_F"])
     agent.target_B.load_state_dict(payload["target_B"])
+    if agent.target_fusion is not None:
+        agent.target_fusion.load_state_dict(payload['target_fusion'])
     agent.fb_optimizer.load_state_dict(payload["fb_optimizer"])
     agent.actor_optimizer.load_state_dict(payload["actor_optimizer"])
     agent.step = payload["step"]

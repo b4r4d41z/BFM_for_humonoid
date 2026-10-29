@@ -1,0 +1,38 @@
+dataset_schema: sharpa_v3
+observation_profile: vision_proprio_v1
+dataset_manifest: data/bfm/manifest.json
+output_dir: runs/fb/vision
+outcome: all
+seed: 0
+device: cuda
+batch_size: 32
+training_steps: 100000
+checkpoint_interval: 10000
+logging_interval: 100
+reference_count: 512
+reference_seed: 17
+vision:
+  backbone: dinov2
+  backbone_id: facebook/dinov2-small
+  revision: main  # First load resolves and checkpoints immutable revision and weights hash.
+  frozen: true
+  image_size: 518
+  cameras: [head, left_wrist, right_wrist]
+  projection_dim: 64
+  embedding_dim: 256
+model:
+  state_dim: 256
+  action_dim: 26
+  latent_dim: 32
+  hidden_dim: 256
+  hidden_layers: 2
+  actor_std: 0.2
+  noise_clip: 0.3
+train:
+  discount: 0.99
+  tau: 0.01
+  learning_rate_fb: 0.0001
+  learning_rate_actor: 0.0001
+  orthonormalization_coefficient: 1.0
+  gradient_clip_norm: 10.0
+  fb_pessimism: 0.0

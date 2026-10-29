@@ -1,5 +1,6 @@
 # Current KUAVO S40 + Sharpa. Old measured_v2 requires an explicit legacy config.
 dataset_schema: sharpa_v3
+observation_profile: task56
 dataset_manifest: data/bfm/manifest.json
 output_dir: runs/fb/vanilla
 seed: 0
