@@ -178,3 +178,7 @@ wandb/
 # *.h5
 __pycache__/
 *.pyc
+
+# Local files
+tools/bfm.patch
+bfm-venv/

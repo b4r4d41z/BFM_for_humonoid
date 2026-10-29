@@ -155,6 +155,15 @@ class SharpaDataset:
             # Training validates metadata without decompressing every RGB frame.
             validate(root, check_image_pixels=False)
             digest.update(json.dumps(dict(root.attrs), sort_keys=True).encode())
+            if observation_profile == VISION:
+                # Source MCAP hashes do not identify a subsequently edited Zarr.
+                # Hash stored RGB chunks/array metadata without decompressing them.
+                # task56 deliberately does not read these bytes.
+                prefix = root.path + '/' if root.path else ''
+                image_prefixes = tuple(f'{prefix}{p}/images/{c}/' for p in ('obs', 'next_obs') for c in CAMERAS)
+                for key in sorted(k for k in root.store if k.startswith(image_prefixes)):
+                    digest.update(key.encode())
+                    digest.update(root.store[key])
             keys = ("obs/state", "next_obs/state", "action", "terminated", "truncated", "timestamp", "next_timestamp", "segment_id")
             data = {k: root[k][:] for k in keys}
             if observation_profile == VISION:

@@ -118,7 +118,11 @@ class FBAgent:
         metrics.update({"fb_loss": loss, "gradient_norm": norm,
                         "forward_prediction_norm": f.norm(dim=-1).mean(),
                         "backward_embedding_norm": b.norm(dim=-1).mean(), "latent_norm": z.norm(dim=-1).mean()})
-        metrics.update(self.update_actor(s.detach(), z, encoded=True))
+        # F and fusion just changed together. Reuse frozen features, but give the
+        # actor the current observation representation rather than stale h.
+        with torch.no_grad():
+            actor_s = m.observation_encoder.fusion(p, features) if self.target_fusion is not None else s
+        metrics.update(self.update_actor(actor_s.detach(), z, encoded=True))
         self.soft_update()
         self.step += 1
         result = {k: float(v.detach()) for k, v in metrics.items()}

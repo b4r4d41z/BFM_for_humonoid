@@ -15,6 +15,7 @@ class VisualReplayBuffer(BFMReplayBuffer):
         indices = np.asarray(indices)
         if indices.ndim != 1:
             raise ValueError('Visual replay expects a flat batch of indices')
+        indices = np.ascontiguousarray(indices)
         key = 'observation' if prefix == 'obs' else 'next_observation'
         result = {'proprio': self.data[key][indices].clone()}
         # Canonical cameras may differ in resolution. Keep a named tensor per view.
