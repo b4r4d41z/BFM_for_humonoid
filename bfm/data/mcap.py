@@ -268,89 +268,115 @@ def build(records, metadata, *, max_age_s, collection_commit, max_camera_skew_s=
         row.update(source_record_ns=np.array([p[0] for p in picked], dtype=np.int64),
                    source_header_ns=np.array([header_ns(m) for m in messages], dtype=np.int64), sync_age_ns=age)
         ticks.append((time, physical, row))
-    # Command checks may inspect +/-half a tick for transport reordering only.
-    # This never provides observations or changes causal sample selection.
+    # Command provenance may tolerate transport reordering; observations above
+    # remain strictly causal. Keep the existing 50 ms transport budget separate
+    # from simulation policy cadence and from how long a target may be held.
     high_rate = (processing.get('controller_cadence') == 'validated source callback rate'
                  and processing.get('canonical_action_cadence') == '0.1 simulation seconds; latest bounded target snapshot')
-    def command(topic, time, expected=None):
-        if high_rate:
-            # A callback-published target stays in force until the next callback.
-            # Policy receive time is not required to be close to source publication.
-            causal = asof(records[topic], time)
-            if topic == HELD[0] and expected is not None and (causal is None or not np.allclose(arm_values(causal[1]), expected, atol=1e-6, rtol=0)):
-                # A raw callback may be recorded before its bounded publication.
-                # Only the latest causal raw identity can justify such reordering;
-                # never search arbitrary future commands for a matching value.
-                raw = asof(records[RAW_ARM], time)
-                following = next((t for t, _ in actions if t > time), None)
-                if raw is not None and header_ns(raw[1]) >= 0:
-                    for t, message in records[topic]:
-                        if t > time and (following is None or t < following) and header_ns(message) == header_ns(raw[1]):
-                            if np.allclose(arm_values(message), expected, atol=1e-6, rtol=0):
-                                return t, message
-            return causal
-        return nearby_command(records[topic], time)
+    reorder_ns = 50_000_000
 
-    checks, raw_ages, saturated = {}, [], 0
+    def reorder_deadline(time):
+        following = next((t for t, _ in actions if t > time), time + reorder_ns + 1)
+        return min(time + reorder_ns, following - 1)
+
+    def first_reordered(topic, time):
+        return next((s for s in records[topic] if time < s[0] <= reorder_deadline(time)), None)
+
+    def command(topic, time, expected):
+        if not high_rate:
+            return nearby_command(records[topic], time)
+        # A callback target remains in force until replaced. Never search past
+        # a conflicting successor for a later coincidentally matching value.
+        causal = asof(records[topic], time)
+        if topic == HELD[0] and (causal is None or not np.allclose(arm_values(causal[1]), expected, atol=1e-6, rtol=0)):
+            raw = asof(records[RAW_ARM], time) or first_reordered(RAW_ARM, time)
+            future = first_reordered(topic, time)
+            if (raw is not None and future is not None and header_ns(raw[1]) >= 0
+                    and header_ns(future[1]) == header_ns(raw[1])
+                    and np.allclose(arm_values(future[1]), expected, atol=1e-6, rtol=0)):
+                return future
+            if (future is not None and raw is not None and asof(records[RAW_ARM], time) is not None
+                    and np.allclose(arm_values(future[1]), expected, atol=1e-6, rtol=0)):
+                raise ValueError(f"Held command has no matching latest raw identity at {time}")
+            return causal
+        return causal if causal is not None else first_reordered(topic, time)
+
+    def hand_values(message):
+        values = np.asarray([*message.left_hand_position, *message.right_hand_position], dtype=np.float64)
+        if len(message.left_hand_position) != 6 or len(message.right_hand_position) != 6 or not np.isfinite(values).all():
+            raise ValueError('Held hand command requires six finite values per hand')
+        return values
+
+    checks, raw_ages, saturated = dict.fromkeys(HELD, 0), [], 0
     saturation_counts = np.zeros(14, dtype=np.int64)
     command_provenance = []
-    for topic in HELD:
-        count = 0
-        if records.get(topic):
-            for time, msg in actions:
-                target = flatten_action(msg)
-                def value(m):
-                    if topic == HELD[0]:
-                        return arm_values(m)
-                    values = np.asarray([*m.left_hand_position, *m.right_hand_position], dtype=np.float64)
-                    if len(m.left_hand_position) != 6 or len(m.right_hand_position) != 6 or not np.isfinite(values).all():
-                        raise ValueError('Held hand command requires six finite values per hand')
-                    return values
-                expected = np.r_[target[GROUPS["left_arm"]], target[GROUPS["right_arm"]]] if topic == HELD[0] else np.r_[target[GROUPS["left_hand"]], target[GROUPS["right_hand"]]]
-                candidate = command(topic, time, expected)
-                if candidate is None or not np.allclose(value(candidate[1]), expected, atol=1e-6, rtol=0):
-                    raise ValueError(f"Held command does not match /bfm/action: {topic} at {time}")
-                count += 1
-        checks[topic] = count
-    # The gateway preserves the source header in the held arm snapshot. Match
-    # header identity AND clamped values, within one tick plus transport jitter.
-    # Raw commands are provenance only: never used in an observation or action.
-    # A recorder can begin after the controller already holds a target, so the
-    # first policy actions may legitimately precede the first recorded RAW_ARM
-    # sample. Reject only that leading startup prefix. Once RAW_ARM recording has
-    # begun, any missing/mismatched provenance remains a fatal data error.
-    first_raw_record_ns = records[RAW_ARM][0][0]
-    provenance_started = False
+    provenance_started, startup_rejects = False, 0
     for index, (time, msg) in enumerate(actions):
-        expected = flatten_action(msg)[ARM_INDICES]
-        held = [command(HELD[0], time, expected)[1]]
-        matches = [(t, m) for t, m in records[RAW_ARM] if (high_rate or abs(t-time) <= 150_000_000)
-                   and any(header_ns(m) == header_ns(h) and header_ns(m) >= 0 for h in held)
-                   and np.allclose(np.clip(arm_values(m), np.array(LOW)[ARM_INDICES], np.array(HIGH)[ARM_INDICES]),
-                                   expected, atol=1e-6, rtol=0)]
-        if not matches:
-            if not provenance_started and time < first_raw_record_ns:
-                ticks[index] = None
-                reason = 'missing_startup_raw_arm_provenance'
-                existing = next((item for item in rejected if item['index'] == index), None)
-                if existing is None:
-                    rejected.append({'index': index, 'record_ns': time,
-                                     'action_header_ns': header_ns(msg), 'reasons': [reason]})
-                elif reason not in existing['reasons']:
-                    existing['reasons'].append(reason)
-                continue
-            raise ValueError(f"Raw arm provenance does not match held header and clamp(raw)==action at {time}")
+        target = flatten_action(msg)
+        expected = target[ARM_INDICES]
+        expected_hand = np.r_[target[GROUPS['left_hand']], target[GROUPS['right_hand']]]
+        held = command(HELD[0], time, expected)
+        hand = command(HELD[1], time, expected_hand)
+        missing = []
+        arm_valid = False
+        for topic, candidate, values, wanted in ((HELD[0], held, arm_values, expected),
+                                                  (HELD[1], hand, hand_values, expected_hand)):
+            valid = candidate is not None and np.allclose(values(candidate[1]), wanted, atol=1e-6, rtol=0)
+            if topic == HELD[0]:
+                arm_valid = valid
+            if not valid:
+                if asof(records[topic], time) is None:
+                    missing.append(topic)
+                else:
+                    raise ValueError(f"Held command does not match /bfm/action: {topic} at index {index}, record_ns={time}")
+        matches = []
+        if arm_valid:
+            # Only identical source headers AND clamp(raw)==action establish the
+            # arm chain. Past source age is unrestricted for callback-held targets;
+            # future evidence has the same narrow transport budget as HELD.
+            identity = [(t, m) for t, m in records[RAW_ARM]
+                        if (t <= reorder_deadline(time) if high_rate else abs(t-time) <= 150_000_000)
+                        and header_ns(m) == header_ns(held[1]) and header_ns(m) >= 0]
+            matches = [(t, m) for t, m in identity
+                       if np.allclose(np.clip(arm_values(m), np.array(LOW)[ARM_INDICES], np.array(HIGH)[ARM_INDICES]),
+                                      expected, atol=1e-6, rtol=0)]
+            if not matches:
+                if not identity and asof(records[RAW_ARM], time) is None:
+                    missing.append(RAW_ARM)
+                else:
+                    raise ValueError(f"Raw arm provenance does not match held header and clamp(raw)==action at index {index}, record_ns={time}")
+        elif asof(records[RAW_ARM], time) is None:
+            missing.append(RAW_ARM)
+        if missing:
+            # A bag can join already-running volatile command streams. Reject
+            # only an incomplete leading chain, never a mismatch after a complete
+            # chain (even if that earlier tick lacked observations/lifecycle).
+            if provenance_started:
+                raise ValueError(f"Missing command provenance after startup at index {index}, record_ns={time}: {missing}")
+            ticks[index] = None
+            startup_rejects += 1
+            reasons = [f'missing_startup_command_provenance:{topic}' for topic in missing]
+            existing = next((item for item in rejected if item['index'] == index), None)
+            if existing is None:
+                existing = {'index': index, 'record_ns': time, 'action_header_ns': header_ns(msg), 'reasons': []}
+                rejected.append(existing)
+            existing['reasons'].extend(reasons)
+            existing['boundary'] = 'startup'
+            continue
         provenance_started = True
-        # Prefer a preceding equivalent request when repeated headers/values are
-        # indistinguishable; use later record time only for transport reordering.
+        for topic in HELD:
+            checks[topic] += 1
+        # Prefer preceding equivalent requests when repeated headers/values are
+        # indistinguishable. These records never supply policy observations.
         t, raw = min(matches, key=lambda sample: (sample[0] > time, abs(sample[0]-time)))
         raw_ages.append((time-t)/1e6)
         saturated += int(not np.allclose(arm_values(raw), expected, atol=1e-6, rtol=0))
         raw_values = arm_values(raw)
         saturation_counts += (raw_values < np.array(LOW)[ARM_INDICES]) | (raw_values > np.array(HIGH)[ARM_INDICES])
         command_provenance.append({'action_record_ns': time,
-                                   'controller_record_ns': command(HELD[0], time, expected)[0],
+                                   'controller_record_ns': held[0],
                                    'raw_record_ns': t, 'source_header_ns': header_ns(raw)})
+    rejected.sort(key=lambda item: item['index'])
     pairs = []
     rejected_intervals = []
     for i in range(len(ticks)-1):
@@ -387,7 +413,7 @@ def build(records, metadata, *, max_age_s, collection_commit, max_camera_skew_s=
              "joint_units": {"position": "rad", "velocity": "rad/s", "effort": "N*m"},
              "max_age_ns": limits.tolist(), "sync_statistics_before_filter": stats, "held_command_checks": checks,
              "action_tick_dt_s_p50_p95_max": np.percentile(np.diff([t for t, _ in actions])/1e9, [50, 95, 100]).tolist(),
-             "rejected_ticks": len(rejected), "rejected_decisions": rejected, "rejected_intervals": rejected_intervals,
+             "rejected_ticks": len(rejected), "startup_provenance_rejected_ticks": startup_rejects, "rejected_decisions": rejected, "rejected_intervals": rejected_intervals,
              "total_action_ticks": len(actions), "valid_decision_ticks": sum(t is not None for t in ticks),
              "policy_timing": timing, "policy_origin_ns": origin,
              "record_origin_ns": actions[0][0], "stored_image_encoding": "rgb8",
@@ -398,8 +424,9 @@ def build(records, metadata, *, max_age_s, collection_commit, max_camera_skew_s=
     deltas = np.diff(policy_stamps)
     attrs['policy_tick_dt_s_min_p50_p95_max'] = np.percentile(deltas / 1e9, [0, 50, 95, 100]).tolist()
     attrs['policy_interval_reasons'] = {reason: intervals.count(reason) for reason in sorted(set(intervals) - {None})}
-    attrs['controller_command_association'] = ('latest_causal_callback_target_and_raw_header' if high_rate else
+    attrs['controller_command_association'] = ('latest_causal_or_first_reordered_with_raw_header' if high_rate else
                                                'latest_causal_within_50ms_else_first_reordered_within_50ms')
+    attrs['command_reorder_window_ns'] = reorder_ns
     attrs['command_provenance'] = command_provenance
     # Unique retained policy ticks, including final next_obs, not duplicated edges.
     kept = sorted(set(pairs) | {i+1 for i in pairs})
