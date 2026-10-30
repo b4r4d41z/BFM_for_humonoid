@@ -247,7 +247,10 @@ def test_dinov2_local_api_frozen_weights_and_offline_restore(tmp_path, monkeypat
     def no_download(*args, **kwargs):
         raise AssertionError('Checkpoint restore must not access pretrained source')
     monkeypatch.setattr(Dinov2Model, 'from_pretrained', no_download)
-    restored = ObservationEncoder(asdict(encoder.cfg), initialize_pretrained=False)
+    saved_config = asdict(encoder.cfg)
+    config_before_restore = copy.deepcopy(saved_config)
+    restored = ObservationEncoder(saved_config, initialize_pretrained=False)
+    assert saved_config == config_before_restore == asdict(restored.cfg)
     restored.load_state_dict(encoder.state_dict())
     obs = {'proprio': torch.zeros(2,116), **{c: torch.full((2,8,12,3), 100, dtype=torch.uint8) for c in CAMERAS}}
     a = encoder(obs, obs['proprio']); b = restored(obs, obs['proprio'])
@@ -268,19 +271,23 @@ def test_camera_ablation_keeps_explicit_names(visual_manifest):
 
 
 def test_real_v3_episode_if_available(tmp_path):
-    tracked_sample = Path(__file__).resolve().parents[2] / 'data/current_sample/record_20261028_150427_892904_5714d4d7'
+    tracked_sample = Path(__file__).resolve().parents[2] / 'data/current_sample/record_20261029_091718_285773_658bd774'
     episode = Path(os.getenv('BFM_REAL_EPISODE', str(tracked_sample)))
     if not (episode/'bag/bag_0.mcap').is_file():
         pytest.skip('Real collection-v3 episode is not available in this environment')
     with (episode/'bag/bag_0.mcap').open('rb') as stream:
         if stream.read(8) != b'\x89MCAP0\r\n':
             pytest.skip('Real binary MCAP unavailable; materialize the Git LFS object first')
-    commit = os.environ.get('BFM_REAL_COLLECTION_COMMIT')
+    metadata = json.loads((episode/'episode.json').read_text())
+    commit = os.environ.get('BFM_REAL_COLLECTION_COMMIT') or metadata.get('recording_code', {}).get('commit_sha')
     assert commit, 'Set BFM_REAL_COLLECTION_COMMIT to the actual recording checkout SHA'
     output = tmp_path/'real.zarr'
     convert(episode, output, max_age_s=[.15]*5, collection_commit=commit)
     root = zarr.open_group(str(output), mode='r')
     assert validate(root)['transitions'] > 0
+    if metadata['bfm'].get('policy_clock', {}).get('domain') == 'isaac_simulation':
+        assert root.attrs['policy_timing']['domain'] == 'action_header_simulation_ns'
+        assert np.allclose(root['next_timestamp'][:]-root['timestamp'][:], metadata['bfm']['policy_dt'], atol=.02)
     assert root.attrs['raw_command_checks']['saturated_ticks'] > 0
     for camera in CAMERAS:
         assert root[f'obs/images/{camera}'][0].dtype == np.uint8

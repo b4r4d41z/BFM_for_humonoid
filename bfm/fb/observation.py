@@ -1,5 +1,6 @@
 """Shared frozen DINOv2, camera-specific projections, and compact MLP fusion."""
 from dataclasses import asdict, dataclass, field
+import copy
 import hashlib
 import importlib.metadata
 import torch
@@ -129,7 +130,9 @@ class ObservationEncoder(nn.Module):
             else:
                 if not cfg.backbone_config or not cfg.weights_sha256:
                     raise ValueError('Checkpoint missing frozen backbone architecture/weights identity')
-                architecture = Dinov2Config.from_dict(cfg.backbone_config)
+                # Transformers adds internal attention fields to its input dict.
+                # Keep the checkpoint's configuration/identity immutable.
+                architecture = Dinov2Config.from_dict(copy.deepcopy(cfg.backbone_config))
                 architecture._attn_implementation = cfg.attention_implementation
                 self.backbone = Dinov2Model(architecture)
                 if self.backbone.config.hidden_size != cfg.feature_dim:

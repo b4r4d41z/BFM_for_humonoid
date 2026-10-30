@@ -10,6 +10,7 @@ import torch
 import zarr
 from numcodecs import Blosc
 from bfm.contracts.sharpa import SCHEMA, VERSION, PROFILE, FIELDS, GROUPS, JOINTS, SharpaContract, ActionNormalizer, validate_states
+from .policy_time import continuity_reason
 
 CAMERAS = ("head", "left_wrist", "right_wrist")
 SOURCES = ("state", "joints", *CAMERAS)
@@ -38,6 +39,9 @@ def validate(root, *, check_image_pixels=True):
     t = len(root["action"])
     shapes = {"action": (t, 26), "action_header_ns": (t,), "timestamp": (t,), "next_timestamp": (t,), "record_ns": (t,), "next_record_ns": (t,),
               "terminated": (t,), "truncated": (t,), "segment_id": (t,)}
+    simulation = m['source_metadata']['bfm'].get('policy_clock', {}).get('domain') == 'isaac_simulation'
+    if simulation:
+        shapes['next_action_header_ns'] = (t,)
     for p in ("obs", "next_obs"):
         shapes.update({f"{p}/state": (t, 56), f"{p}/joint_position": (t, len(names)), f"{p}/joint_velocity": (t, len(names)),
                        f"{p}/source_record_ns": (t, 5), f"{p}/source_header_ns": (t, 5), f"{p}/sync_age_ns": (t, 5)})
@@ -74,12 +78,24 @@ def validate(root, *, check_image_pixels=True):
     if m.get("stored_image_encoding") != "rgb8":
         raise ValueError("Canonical image encoding must be rgb8")
     r, nr = root["record_ns"][:], root["next_record_ns"][:]
-    dt = (nr-r)/1e9
-    if (np.diff(r) <= 0).any() or (dt < .05).any() or (dt > .15).any():
-        raise ValueError("Duplicate/invalid action ticks; expected 10 Hz within [0.05,0.15] s")
-    origin = m["record_origin_ns"]
-    if not np.allclose(root["timestamp"][:], (r-origin)/1e9, atol=1e-9, rtol=0) or not np.allclose(root["next_timestamp"][:], (nr-origin)/1e9, atol=1e-9, rtol=0):
-        raise ValueError("Relative times differ from record timestamps")
+    if (np.diff(r) <= 0).any() or (nr <= r).any():
+        raise ValueError('Duplicate/backward action record timestamps')
+    if simulation:
+        timing = m.get('policy_timing', {})
+        period = m['source_metadata']['bfm']['policy_clock']['period_ns']
+        if (timing.get('domain') != 'action_header_simulation_ns' or timing.get('period_ns') != period
+                or type(timing.get('tolerance_ns')) is not int or not 0 <= timing['tolerance_ns'] < period / 2):
+            raise ValueError('Invalid stored simulation policy timing')
+        p, np_ = root['action_header_ns'][:], root['next_action_header_ns'][:]
+        if any(continuity_reason(a, b, timing) for a, b in zip(p, np_)):
+            raise ValueError('Invalid simulation policy adjacency')
+        origin = m['policy_origin_ns']
+    else:
+        p, np_, origin = r, nr, m['record_origin_ns']
+        if ((nr-r) < 50_000_000).any() or ((nr-r) > 150_000_000).any():
+            raise ValueError('Invalid legacy wall policy adjacency')
+    if not np.allclose(root['timestamp'][:], (p-origin)/1e9, atol=1e-9, rtol=0) or not np.allclose(root['next_timestamp'][:], (np_-origin)/1e9, atol=1e-9, rtol=0):
+        raise ValueError('Relative times differ from policy timestamps')
     term, trunc, seg = root["terminated"][:], root["truncated"][:], root["segment_id"][:]
     # No task terminal event is available in this source version.
     ends = np.r_[seg[1:] != seg[:-1], True]
@@ -88,6 +104,8 @@ def validate(root, *, check_image_pixels=True):
     continuous = ~ends[:-1]
     if not np.array_equal(nr[:-1][continuous], r[1:][continuous]):
         raise ValueError("Transition jumped across a missing tick")
+    if simulation and not np.array_equal(np_[:-1][continuous], p[1:][continuous]):
+        raise ValueError('Simulation policy timestamps are discontinuous')
     if (nr[:-1][~continuous] >= r[1:][~continuous]).any():
         raise ValueError("Segments overlap")
     keys = ["state", "joint_position", "joint_velocity", "source_record_ns", "source_header_ns", "sync_age_ns"]
