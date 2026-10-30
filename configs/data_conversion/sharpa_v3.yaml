@@ -1,0 +1,3 @@
+# Recorder-time freshness defaults already used by the Sharpa conversion guide.
+max_age_s: [0.15, 0.15, 0.15, 0.15, 0.15]
+max_camera_skew_s: null

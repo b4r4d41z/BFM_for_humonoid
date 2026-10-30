@@ -270,6 +270,27 @@ def build(records, metadata, *, max_age_s, collection_commit, max_camera_skew_s=
         ticks.append((time, physical, row))
     # Command checks may inspect +/-half a tick for transport reordering only.
     # This never provides observations or changes causal sample selection.
+    high_rate = (processing.get('controller_cadence') == 'validated source callback rate'
+                 and processing.get('canonical_action_cadence') == '0.1 simulation seconds; latest bounded target snapshot')
+    def command(topic, time, expected=None):
+        if high_rate:
+            # A callback-published target stays in force until the next callback.
+            # Policy receive time is not required to be close to source publication.
+            causal = asof(records[topic], time)
+            if topic == HELD[0] and expected is not None and (causal is None or not np.allclose(arm_values(causal[1]), expected, atol=1e-6, rtol=0)):
+                # A raw callback may be recorded before its bounded publication.
+                # Only the latest causal raw identity can justify such reordering;
+                # never search arbitrary future commands for a matching value.
+                raw = asof(records[RAW_ARM], time)
+                following = next((t for t, _ in actions if t > time), None)
+                if raw is not None and header_ns(raw[1]) >= 0:
+                    for t, message in records[topic]:
+                        if t > time and (following is None or t < following) and header_ns(message) == header_ns(raw[1]):
+                            if np.allclose(arm_values(message), expected, atol=1e-6, rtol=0):
+                                return t, message
+            return causal
+        return nearby_command(records[topic], time)
+
     checks, raw_ages, saturated = {}, [], 0
     saturation_counts = np.zeros(14, dtype=np.int64)
     command_provenance = []
@@ -278,7 +299,6 @@ def build(records, metadata, *, max_age_s, collection_commit, max_camera_skew_s=
         if records.get(topic):
             for time, msg in actions:
                 target = flatten_action(msg)
-                candidate = nearby_command(records[topic], time)
                 def value(m):
                     if topic == HELD[0]:
                         return arm_values(m)
@@ -287,6 +307,7 @@ def build(records, metadata, *, max_age_s, collection_commit, max_camera_skew_s=
                         raise ValueError('Held hand command requires six finite values per hand')
                     return values
                 expected = np.r_[target[GROUPS["left_arm"]], target[GROUPS["right_arm"]]] if topic == HELD[0] else np.r_[target[GROUPS["left_hand"]], target[GROUPS["right_hand"]]]
+                candidate = command(topic, time, expected)
                 if candidate is None or not np.allclose(value(candidate[1]), expected, atol=1e-6, rtol=0):
                     raise ValueError(f"Held command does not match /bfm/action: {topic} at {time}")
                 count += 1
@@ -296,8 +317,8 @@ def build(records, metadata, *, max_age_s, collection_commit, max_camera_skew_s=
     # Raw commands are provenance only: never used in an observation or action.
     for time, msg in actions:
         expected = flatten_action(msg)[ARM_INDICES]
-        held = [nearby_command(records[HELD[0]], time)[1]]
-        matches = [(t, m) for t, m in records[RAW_ARM] if abs(t-time) <= 150_000_000
+        held = [command(HELD[0], time, expected)[1]]
+        matches = [(t, m) for t, m in records[RAW_ARM] if (high_rate or abs(t-time) <= 150_000_000)
                    and any(header_ns(m) == header_ns(h) and header_ns(m) >= 0 for h in held)
                    and np.allclose(np.clip(arm_values(m), np.array(LOW)[ARM_INDICES], np.array(HIGH)[ARM_INDICES]),
                                    expected, atol=1e-6, rtol=0)]
@@ -311,7 +332,7 @@ def build(records, metadata, *, max_age_s, collection_commit, max_camera_skew_s=
         raw_values = arm_values(raw)
         saturation_counts += (raw_values < np.array(LOW)[ARM_INDICES]) | (raw_values > np.array(HIGH)[ARM_INDICES])
         command_provenance.append({'action_record_ns': time,
-                                   'controller_record_ns': nearby_command(records[HELD[0]], time)[0],
+                                   'controller_record_ns': command(HELD[0], time, expected)[0],
                                    'raw_record_ns': t, 'source_header_ns': header_ns(raw)})
     pairs = []
     rejected_intervals = []
@@ -360,7 +381,8 @@ def build(records, metadata, *, max_age_s, collection_commit, max_camera_skew_s=
     deltas = np.diff(policy_stamps)
     attrs['policy_tick_dt_s_min_p50_p95_max'] = np.percentile(deltas / 1e9, [0, 50, 95, 100]).tolist()
     attrs['policy_interval_reasons'] = {reason: intervals.count(reason) for reason in sorted(set(intervals) - {None})}
-    attrs['controller_command_association'] = 'latest_causal_within_50ms_else_first_reordered_within_50ms'
+    attrs['controller_command_association'] = ('latest_causal_callback_target_and_raw_header' if high_rate else
+                                               'latest_causal_within_50ms_else_first_reordered_within_50ms')
     attrs['command_provenance'] = command_provenance
     # Unique retained policy ticks, including final next_obs, not duplicated edges.
     kept = sorted(set(pairs) | {i+1 for i in pairs})
@@ -370,7 +392,7 @@ def build(records, metadata, *, max_age_s, collection_commit, max_camera_skew_s=
     attrs.update(max_camera_skew_s=max_camera_skew_s, camera_skew_tick_count=len(kept),
                  raw_command_checks={"count": len(raw_ages), "saturated_ticks": saturated,
                                      "saturation_per_joint": dict(zip(JOINTS['left'] + JOINTS['right'], saturation_counts.tolist())),
-                                     "window_ms": 150, "association": "held_source_header_and_clamped_values",
+                                     "window_ms": None if high_rate else 150, "association": "held_source_header_and_clamped_values",
                                      "age_ms_p50_p95_max": np.percentile(raw_ages, [50, 95, 100]).tolist()})
     return arrays, attrs
 

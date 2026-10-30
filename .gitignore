@@ -182,3 +182,8 @@ __pycache__/
 # Local files
 tools/bfm.patch
 bfm-venv/
+
+# Generated canonical training stores and manifests.
+/data/zarr/*
+!/data/zarr/.gitkeep
+/zarr_training_pipeline.patch

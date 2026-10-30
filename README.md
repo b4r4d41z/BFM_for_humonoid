@@ -24,3 +24,7 @@ See [validation results and remaining simulator prerequisites](docs/vanilla_fb_r
 # 📊 Dataset used in project
 
 https://huggingface.co/datasets/b4r4d41z/Bimanual-humanid-tasks
+
+For raw collection-v3 recordings → validated `data/zarr` → visual FB training:
+`python tools/train_from_recordings.py /path/to/raw_recordings`.
+See [workflow and failure/reuse semantics](docs/train_from_recordings.md).

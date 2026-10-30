@@ -1,6 +1,6 @@
 dataset_schema: sharpa_v3
 observation_profile: vision_proprio_v1
-dataset_manifest: data/bfm/manifest.json
+dataset_manifest: data/zarr/manifest.json
 output_dir: runs/fb/vision
 outcome: all
 seed: 0
@@ -8,12 +8,12 @@ device: cuda
 batch_size: 32
 training_steps: 100000
 checkpoint_interval: 10000
-logging_interval: 100
+logging_interval: 10
 reference_count: 512
 reference_seed: 17
 vision:
   backbone: dinov2
-  backbone_id: facebook/dinov2-small
+  backbone_id: models/dinov2-small
   revision: main  # First load resolves and checkpoints immutable revision and weights hash.
   frozen: true
   image_size: 518

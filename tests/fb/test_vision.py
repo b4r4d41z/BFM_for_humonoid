@@ -271,7 +271,8 @@ def test_camera_ablation_keeps_explicit_names(visual_manifest):
 
 
 def test_real_v3_episode_if_available(tmp_path):
-    tracked_sample = Path(__file__).resolve().parents[2] / 'data/current_sample/record_20261029_091718_285773_658bd774'
+    tracked_sample = next(iter(sorted((Path(__file__).resolve().parents[2] / 'data/current_sample').glob('*/episode.json'))), None)
+    tracked_sample = tracked_sample.parent if tracked_sample else Path('/nonexistent-bfm-sample')
     episode = Path(os.getenv('BFM_REAL_EPISODE', str(tracked_sample)))
     if not (episode/'bag/bag_0.mcap').is_file():
         pytest.skip('Real collection-v3 episode is not available in this environment')

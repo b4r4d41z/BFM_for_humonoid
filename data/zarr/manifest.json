@@ -1,0 +1,10 @@
+{
+  "schema_version": "3.0.0",
+  "dataset_id": "recordings-sharpa-v3",
+  "episodes": [
+    {
+      "path": "episode-2bda20957be18d94c09d3b622ec19afe52f69f72b202fe92e9e8e95b31564587.zarr",
+      "split": "train"
+    }
+  ]
+}
