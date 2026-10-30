@@ -33,6 +33,7 @@ def train(config, *, resume=None):
         "observation_profile",
         "vision",
         "outcome",
+        "feature_cache",
     }
     if set(config) - allowed:
         raise ValueError(f"Unknown training keys: {set(config)-allowed}")
@@ -114,6 +115,8 @@ def train(config, *, resume=None):
         )
         state_dim = vision["embedding_dim"]
     else:
+        if cfg.get("feature_cache"):
+            raise ValueError("Feature cache requires vision_proprio_v1")
         if cfg.get("vision"):
             raise ValueError("task56 cannot have vision configuration")
 
@@ -208,6 +211,10 @@ def train(config, *, resume=None):
                 )
             )
         )
+
+    if cfg.get("feature_cache"):
+        from bfm.data.feature_cache import FeatureCache
+        replay.feature_cache = FeatureCache(cfg["feature_cache"], data, agent.model.observation_encoder)
 
     cfg["model"] = asdict(agent.model.cfg)
     cfg["train"] = asdict(agent.cfg)

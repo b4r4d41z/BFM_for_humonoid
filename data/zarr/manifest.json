@@ -3,7 +3,67 @@
   "dataset_id": "recordings-sharpa-v3",
   "episodes": [
     {
-      "path": "episode-2bda20957be18d94c09d3b622ec19afe52f69f72b202fe92e9e8e95b31564587.zarr",
+      "path": "episode-066b4f487745602ff745265daa50b61a12b33bd1bec14f3f02ce587f1db0e012.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-1960daa57edec19d1e4c6123bf123d768c2736685e6a962638aea5a8316ccbd2.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-1c86529cebdb6e51e4b4b476215374578ad407b97e3aa3e8f14a464d08815dbc.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-2a44efe12de58ba8f9373dba4c28b17ea514aa67b939410dfa0f0f390db1f717.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-3206247cef6971620b01c5d1198da8e9c7788875c1b63283362785fdb6fa1427.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-3fec4735bf0372712554e7bdda38de88a99d7bdf3bda613affef892a5150a2e3.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-455706bf2a76cdf7151f6d60c66187fd447f783ba8181e7e329eccaa82add7de.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-4e88891fff93c16cca039caba601093fb5fddff17c2157d74a1b1056b47b4a90.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-5792b62c9058e1a3dcb9345146f3b51d7b166379e99b198b2e1eed9f82c25ae6.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-69a9c20997b041671778171b2ad1357f529a101fb912ce6ed012dd70bdaf7dcd.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-737b4e4d9f0b9cbd1525790bb186fb2c8e60d19857bf4ea6a60960c42c2936dc.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-7e0db638f5e2784ae094208983c25c07c6a6542b658761537f665664ea2ab77c.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-857b28656dca9fdf828b1211962d8bc462fe94cfd70f859c08d68b43111c14d8.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-9efaf695f5588699bf1fbd14fbd4d70082e08dbd665c2727a12bf06d52e84680.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-d4f415f05f2f8b84e9746216b1b63b892c7e96767c2dcb43f473e6aa1fedfffb.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-e097f7cc94d2421965a1dfb24cc978ddc2ec1f329092819e261e4636ba90fdf6.zarr",
       "split": "train"
     }
   ]

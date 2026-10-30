@@ -71,13 +71,24 @@ class FBModel(nn.Module):
         return (self.observation_encoder.fusion if fusion is None else fusion)(proprio, features)
 
     def prepare_observation(self, observation):
-        if not isinstance(observation, dict) or set(observation) != {'proprio', *self.observation_encoder.cfg.cameras}:
+        cameras = self.observation_encoder.cfg.cameras
+        cached = isinstance(observation, dict) and set(observation) == {'proprio', *[f'features/{c}' for c in cameras]}
+        if not isinstance(observation, dict) or (not cached and set(observation) != {'proprio', *cameras}):
             raise ValueError('Visual input requires only measured proprio and configured named cameras')
         from bfm.contracts.vision import PROPRIO_DIM
         proprio = torch.as_tensor(observation['proprio'], dtype=torch.float32, device=self.device)
         if proprio.ndim != 2 or proprio.shape[1] != PROPRIO_DIM or not torch.isfinite(proprio).all():
             raise ValueError('Visual proprioception must be finite [N,116]')
-        return self.normalizer(proprio), self.observation_encoder.features(observation)
+        if cached:
+            features = {}
+            for camera in cameras:
+                value = torch.as_tensor(observation[f'features/{camera}'], device=self.device)
+                if value.dtype != torch.float32 or value.shape != (len(proprio), self.observation_encoder.cfg.feature_dim) or not torch.isfinite(value).all():
+                    raise ValueError('Cached DINO features must be finite float32 [N,feature_dim]')
+                features[camera] = value.detach()
+        else:
+            features = self.observation_encoder.features(observation)
+        return self.normalizer(proprio), features
 
     def backward_map(self, states):
         return self.backward(self._states(states))

@@ -15,6 +15,7 @@ def main():
     from bfm.fb.trainer import train
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('zarr', type=Path)
+    parser.add_argument('--feature-cache', type=Path, help='Validated persistent frozen DINO features')
     parser.add_argument('--config', type=Path, default=ROOT/'configs/fb/vision_offline.yaml')
     parser.add_argument('--device', choices=['cpu', 'cuda'])
     parser.add_argument('--steps', type=int)
@@ -22,8 +23,13 @@ def main():
     parser.add_argument('--feature-batch-size', type=int)
     parser.add_argument('--reference-count', type=int)
     args = parser.parse_args()
-    manifest = validate_training(args.zarr)
     cfg = yaml.safe_load(args.config.read_text())
+    if args.feature_cache is not None:
+        cfg['feature_cache'] = str(args.feature_cache.resolve())
+    # Cached startup validates source metadata/numerics and hashes compressed RGB
+    # in SharpaDataset; cache construction already checked image continuity.
+    manifest = ((args.zarr/'manifest.json' if args.zarr.is_dir() else args.zarr)
+                if cfg.get('feature_cache') else validate_training(args.zarr))
     cfg['dataset_manifest'] = str(manifest)
     cfg['output_dir'] = str(ROOT/'runs/fb/zarr'/uuid.uuid4().hex)
     cfg['device'] = args.device or ('cuda' if torch.cuda.is_available() else 'cpu')

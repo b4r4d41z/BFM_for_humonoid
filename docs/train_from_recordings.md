@@ -145,3 +145,51 @@ random training-distribution z, full B(s), episode means and task/search vectors
 Only known episode/success/source metadata are used. Optional --method umap needs
 an existing umap-learn installation; PCA does not require it. Cached embeddings
 are checkpoint-bound and avoid duplicate DINO passes during diagnostics.
+
+## Persistent frozen DINO feature cache
+
+Existing canonical Zarr needs no reconversion. RGB uint8 and its Blosc/Zstd
+compression remain unchanged. To avoid DINO inference and RGB decompression in
+training updates, build a disposable derived cache, then use it in a later process:
+
+```bash
+python tools/build_feature_cache.py data/zarr --device cuda --batch-size 32
+python tools/train_from_zarr.py data/zarr --device cuda --feature-cache data/feature_cache
+# Original online RGB/DINO path:
+python tools/train_from_zarr.py data/zarr --device cuda
+```
+
+Both tools accept the same `--config` YAML; use matching vision and outcome
+selection. Cache construction also accepts `--output`. Its default directory is
+`data/feature_cache/`, ignored by Git. `index.json` binds the selected training
+manifest/dataset fingerprint to content-addressed `episodes/<hash>/` entries.
+Each entry contains `entry.json` and a memory-mapped `features.npy` of float32
+`[unique endpoints, cameras, backbone feature dimension]` (normally 384).
+Only frozen CLS features are cached; projections, proprio encoding and fusion
+remain trainable. Extraction calls the same encoder/preprocessor as online use.
+Adjacent `next_obs`/`obs` share an endpoint only inside a fully validated segment.
+
+Identity includes compressed RGB content through the existing dataset fingerprint,
+source episode identity, camera order, observation profile, resolved backbone
+configuration/revision/weight hash, image size, preprocessing, implementation and
+library versions, float32 dtype and matmul precision settings. Changing these
+requires rebuilding; incompatible or damaged caches fail closed. Batching and
+trainable projection/fusion sizes do not invalidate frozen features. Small
+float32 rounding differences across execution batch sizes/devices are possible;
+no mixed-precision storage or training is introduced.
+
+Rerun the builder after adding episodes: unchanged episode entries are validated
+and reused; the dataset index is published only after all entries finish. Failed
+builds never publish a partial index. Keep canonical input stores static while
+building/training. Do not run concurrent builders into the same destination.
+Local backbone identifiers include their configured path; moving model assets or
+changing the vision implementation can conservatively require a rebuild.
+Delete a corrupt cache directory and rebuild it; it contains no canonical data.
+
+Cached startup still hashes compressed RGB bytes to detect stale data, but does
+not decompress pixels. The model loads its frozen backbone once to verify weight
+identity and preserve existing self-contained checkpoints/runtime inference;
+training updates and checkpoint reference embeddings use cached features without
+DINO forwards. Thus backbone parameter memory remains allocated. Without
+`--feature-cache` (or the equivalent `feature_cache` training config key), behavior
+is unchanged. CPU validation can use `--device cpu --batch-size 1` for the builder.

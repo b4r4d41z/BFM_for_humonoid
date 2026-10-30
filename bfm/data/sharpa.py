@@ -149,7 +149,7 @@ class SharpaDataset:
         if observation_profile not in (PROFILE, VISION) or outcome not in ('all', 'successful', 'failed'):
             raise ValueError("Unknown observation_profile or outcome selection")
         self.observation_profile = observation_profile
-        self.image_rows, self.roots = [], []
+        self.image_rows, self.roots, self.episode_fingerprints = [], [], []
         path = Path(manifest)
         self.manifest = json.loads(path.read_text())
         if self.manifest.get("schema_version") != VERSION or not self.manifest.get("dataset_id"):
@@ -172,7 +172,11 @@ class SharpaDataset:
             # Full image continuity is checked at conversion / explicit validation.
             # Training validates metadata without decompressing every RGB frame.
             validate(root, check_image_pixels=False)
-            digest.update(json.dumps(dict(root.attrs), sort_keys=True).encode())
+            episode_digest = hashlib.sha256()
+            def update(value):
+                digest.update(value)
+                episode_digest.update(value)
+            update(json.dumps(dict(root.attrs), sort_keys=True).encode())
             if observation_profile == VISION:
                 # Source MCAP hashes do not identify a subsequently edited Zarr.
                 # Hash stored RGB chunks/array metadata without decompressing them.
@@ -180,8 +184,8 @@ class SharpaDataset:
                 prefix = root.path + '/' if root.path else ''
                 image_prefixes = tuple(f'{prefix}{p}/images/{c}/' for p in ('obs', 'next_obs') for c in CAMERAS)
                 for key in sorted(k for k in root.store if k.startswith(image_prefixes)):
-                    digest.update(key.encode())
-                    digest.update(root.store[key])
+                    update(key.encode())
+                    update(root.store[key])
             keys = ("obs/state", "next_obs/state", "action", "terminated", "truncated", "timestamp", "next_timestamp", "segment_id")
             data = {k: root[k][:] for k in keys}
             if observation_profile == VISION:
@@ -189,7 +193,8 @@ class SharpaDataset:
                     data[f'{p}/proprio'] = proprioception(root.attrs['joint_names'],
                         root[f'{p}/joint_position'][:], root[f'{p}/joint_velocity'][:])
             for k, v in data.items():
-                digest.update(k.encode()); digest.update(v.tobytes())
+                update(k.encode()); update(v.tobytes())
+            self.episode_fingerprints.append(episode_digest.hexdigest())
             for seg in np.unique(data["segment_id"]):
                 idx = data["segment_id"] == seg
                 view = 'proprio' if observation_profile == VISION else 'state'

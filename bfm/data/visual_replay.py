@@ -10,6 +10,7 @@ class VisualReplayBuffer(BFMReplayBuffer):
         super().__init__(dataset.episodes, seed)
         self.dataset = dataset
         self.cameras = tuple(cameras)
+        self.feature_cache = None
 
     def observations(self, indices, prefix='obs'):
         indices = np.asarray(indices)
@@ -18,6 +19,11 @@ class VisualReplayBuffer(BFMReplayBuffer):
         indices = np.ascontiguousarray(indices)
         key = 'observation' if prefix == 'obs' else 'next_observation'
         result = {'proprio': self.data[key][indices].clone()}
+        if self.feature_cache is not None:
+            if self.feature_cache.cameras != self.cameras:
+                raise ValueError('Feature cache camera ordering differs from replay')
+            result.update(self.feature_cache.observations(indices, prefix))
+            return result
         # Canonical cameras may differ in resolution. Keep a named tensor per view.
         for camera in self.cameras:
             unique, inverse = np.unique(indices, return_inverse=True)

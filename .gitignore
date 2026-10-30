@@ -187,3 +187,6 @@ bfm-venv/
 /data/zarr/*
 !/data/zarr/.gitkeep
 /zarr_training_pipeline.patch
+
+# Disposable frozen visual features.
+/data/feature_cache/
