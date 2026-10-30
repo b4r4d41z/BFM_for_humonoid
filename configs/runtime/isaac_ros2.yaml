@@ -1,0 +1,20 @@
+checkpoint: null
+task_z: null
+use_sim_time: true
+policy_hz: 10.0
+max_age_s: 0.15
+max_camera_skew_s: null
+cameras: [head, left_wrist, right_wrist]
+proprio_order: vision_proprio_v1  # Exact PROPRIO_JOINTS order from bfm/contracts/vision.py.
+action_dim: 26
+normalized_bounds: [-1, 1]
+physical_bounds: SharpaContract  # Existing frozen per-joint arm/hand bounds.
+joint_topic: /robot/state/joint_states
+camera_topics:
+  head: /sensors/camera/head/image_raw
+  left_wrist: /sensors/camera/left_wrist/image_raw
+  right_wrist: /sensors/camera/right_wrist/image_raw
+output_topics:
+  arm: /robot_arm_joint_command
+  hand: /bfm/command/hand_target
+  action: /bfm/action

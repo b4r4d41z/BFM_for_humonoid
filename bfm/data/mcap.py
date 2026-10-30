@@ -315,7 +315,13 @@ def build(records, metadata, *, max_age_s, collection_commit, max_camera_skew_s=
     # The gateway preserves the source header in the held arm snapshot. Match
     # header identity AND clamped values, within one tick plus transport jitter.
     # Raw commands are provenance only: never used in an observation or action.
-    for time, msg in actions:
+    # A recorder can begin after the controller already holds a target, so the
+    # first policy actions may legitimately precede the first recorded RAW_ARM
+    # sample. Reject only that leading startup prefix. Once RAW_ARM recording has
+    # begun, any missing/mismatched provenance remains a fatal data error.
+    first_raw_record_ns = records[RAW_ARM][0][0]
+    provenance_started = False
+    for index, (time, msg) in enumerate(actions):
         expected = flatten_action(msg)[ARM_INDICES]
         held = [command(HELD[0], time, expected)[1]]
         matches = [(t, m) for t, m in records[RAW_ARM] if (high_rate or abs(t-time) <= 150_000_000)
@@ -323,7 +329,18 @@ def build(records, metadata, *, max_age_s, collection_commit, max_camera_skew_s=
                    and np.allclose(np.clip(arm_values(m), np.array(LOW)[ARM_INDICES], np.array(HIGH)[ARM_INDICES]),
                                    expected, atol=1e-6, rtol=0)]
         if not matches:
+            if not provenance_started and time < first_raw_record_ns:
+                ticks[index] = None
+                reason = 'missing_startup_raw_arm_provenance'
+                existing = next((item for item in rejected if item['index'] == index), None)
+                if existing is None:
+                    rejected.append({'index': index, 'record_ns': time,
+                                     'action_header_ns': header_ns(msg), 'reasons': [reason]})
+                elif reason not in existing['reasons']:
+                    existing['reasons'].append(reason)
+                continue
             raise ValueError(f"Raw arm provenance does not match held header and clamp(raw)==action at {time}")
+        provenance_started = True
         # Prefer a preceding equivalent request when repeated headers/values are
         # indistinguishable; use later record time only for transport reordering.
         t, raw = min(matches, key=lambda sample: (sample[0] > time, abs(sample[0]-time)))

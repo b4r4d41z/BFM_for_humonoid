@@ -4,14 +4,17 @@ From the repository root, with `requirements-vision.txt` installed and the local
 `models/dinov2-small` Git LFS weights materialized:
 
 ```bash
-python tools/train_from_recordings.py /path/to/raw_recordings
+python tools/convert_recordings.py /path/to/raw_recordings
+python tools/train_from_zarr.py data/zarr
 ```
 
-The sole required argument is a raw episode directory or a directory recursively
+The conversion command takes a raw episode directory or a directory recursively
 containing episodes with `episode.json`. The launcher reads authoritative
 `recording_code.commit_sha`, calls the strict converter, validates each store,
-automatically writes the existing Sharpa manifest, and calls `bfm.fb.trainer.train`
-with `configs/fb/vision_offline.yaml`. It selects CUDA when available, otherwise CPU.
+and automatically writes the existing Sharpa manifest. It never starts training.
+The independent Zarr-only trainer validates the manifest and all visual training
+fields, then calls `bfm.fb.trainer.train` with `configs/fb/vision_offline.yaml`.
+It never reads MCAP or regenerates converted data. CUDA is selected when available.
 It does not change the model, objective, action contract, or observation pipeline.
 
 ```text
@@ -44,7 +47,7 @@ is made; invalid canonical actions/provenance still abort conversion.
 
 Progress shows sample N/total, episode name, a bar, and converting/validated/skipped/
 failed status. `skipped` means a validated identical conversion is reused, not that
-invalid input is ignored. Any failed episode aborts the batch before training.
+invalid input is ignored. Any failed episode aborts conversion.
 Completed earlier stores remain valid and reusable. Temporary conversions are
 removed on ordinary failures; even after process termination their hidden temporary
 directories are never discovered as final stores. An existing store is validated
@@ -57,14 +60,88 @@ assignments are preserved; new episodes are assigned wholly to train. No automat
 validation/test split or success filtering is invented. Duplicate episode IDs,
 invalid stores or malformed existing split assignments abort preparation.
 
-Each invocation starts a new run under `runs/fb/recordings/`; it does not overwrite
+Each training invocation starts a new run under `runs/fb/zarr/`; it does not overwrite
 or silently resume training. For explicit resume use the existing low-level trainer.
 On CPU or limited GPUs, a short real pretrained smoke run is:
 
 ```bash
-python tools/train_from_recordings.py data/current_sample \
+python tools/train_from_zarr.py data/zarr \
   --device cpu --steps 3 --batch-size 2 --feature-batch-size 1 --reference-count 2
 ```
 
 `--config` optionally selects an existing training YAML. Count/device overrides are
 optional diagnostics; normal use needs no output path, manifest, SHA or age flags.
+
+
+## Post-training task inference and external simulator runtime
+
+```text
+raw MCAP -> convert_recordings.py -> Zarr + manifest
+-> train_from_zarr.py -> last.pt
+-> successful reference trajectories -> build_task_z.py -> task_z.pt
+-> run_policy_ros.py -> ROS2 -> external Isaac simulator
+```
+
+Training Zarr contains actions, measured q/dq (adapted to 116D proprio), three
+RGB views and their next observations, durations/timestamps, terminal/truncation
+flags and reference-state sidecars. DINO weights, Python code and model YAML are
+external resources, not episode arrays. A saved checkpoint contains the inference
+model weights and preprocessing/normalization identity as before.
+
+```bash
+python tools/build_task_z.py --checkpoint runs/.../last.pt \
+  --references data/zarr/manifest.json --output task_z/sorting_fruit.pt \
+  --embeddings-out task_z/reference_embeddings.pt
+python tools/run_policy_ros.py --checkpoint runs/.../last.pt \
+  --task-z task_z/sorting_fruit.pt --device cuda
+```
+
+References may be a supported manifest, a directory of Zarr stores, or one store.
+Only episodes explicitly labelled success=true contribute to the task vector.
+The label is consumed as supplied, not independently certified by this tool.
+All retained states along each source trajectory, including final next_obs and
+unique shared endpoints, are encoded through the checkpoint's own visual encoder
+and B. Missing/rejected raw frames cannot be reconstructed from Zarr. State means
+are computed within source episodes (across retained segments), then averaged
+across successful episodes and projected using model.project_z. Longer episodes
+receive no additional weight. The saved vector records method, checkpoint SHA256,
+latent dimension, reference episode IDs/paths and state counts. A bare tensor is
+also accepted at runtime; metadata-bearing task files must match the checkpoint.
+Task inference never alters random-z reward-free pretraining.
+
+ROS topics/message types follow the existing scripts/run_sharpa_fb.py interface:
+sensor_msgs/Image, sensor_msgs/JointState, and dynamic_biped BfmAction and
+RobotHandPosition. Configure configs/runtime/isaac_ros2.yaml and source the ROS2
+message packages. Normalized actor output is converted through ActionNormalizer
+and the existing fill_messages adapter for physical controller publication.
+The canonical joint order is PROPRIO_JOINTS; no privileged state enters the actor.
+The task vector is loaded once and reused, with no per-frame resampling. Local
+monotonic receive ages/skew include inference latency. Missing observations wait;
+stale inputs or competing publishers stop publication. External gateway/teleop
+publishers on the control topics must relinquish control. The simulator remains
+external; live transport/control authority needs integration validation.
+
+## Experimental search and diagnostics
+
+```bash
+python tools/search_task_z.py --checkpoint runs/.../last.pt --count 32 --output candidates.pt
+# External simulator runs each candidate ID and writes {"z-000000": score, ...}.
+python tools/search_task_z.py --checkpoint runs/.../last.pt \
+  --candidates candidates.pt --scores scores.json --output best_task_z.pt
+python tools/visualize_latent_space.py --checkpoint runs/.../last.pt \
+  --embeddings task_z/reference_embeddings.pt \
+  --task-z task_z/sorting_fruit.pt best_task_z.pt --output diagnostics/latent
+```
+
+Search uses model.sample_z, not a new distribution. The Python rank_candidates
+API accepts a rollout callback; the CLI accepts externally produced finite scores
+for exactly the candidate IDs. Scores are ranked deterministically and the best
+vector is saved as a runtime-compatible task file. This is the experimental
+alternative; successful-reference inference is primary. No simulator is embedded.
+
+PCA uses NumPy SVD and emits CSV coordinates/metadata and an SVG scatter plot with
+source colors and metadata tooltips, without new dependencies. Inputs can combine
+random training-distribution z, full B(s), episode means and task/search vectors.
+Only known episode/success/source metadata are used. Optional --method umap needs
+an existing umap-learn installation; PCA does not require it. Cached embeddings
+are checkpoint-bound and avoid duplicate DINO passes during diagnostics.
