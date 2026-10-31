@@ -18,3 +18,12 @@ output_topics:
   arm: /robot_arm_joint_command
   hand: /bfm/command/hand_target
   action: /bfm/action
+
+# Evaluation defaults; CLI overrides these values. Safety/logging are mandatory.
+mode: shadow
+warmup_ticks: 10
+max_policy_steps: 300
+safety:
+  max_arm_delta_rad: 0.1  # Conservative evaluation cap per policy tick, not a certified velocity limit.
+logging:
+  output_root: runs/eval

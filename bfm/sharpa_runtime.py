@@ -51,6 +51,12 @@ class VisualObservationBuffer:
             raise ValueError('Receive clock moved backwards')
         self.samples[source] = (receive_time, value)
 
+    def diagnostics(self, tick_time):
+        sources = ('joints', *self.cameras)
+        ages = {s: tick_time-self.samples[s][0] if s in self.samples else None for s in sources}
+        times = [self.samples[c][0] for c in self.cameras if c in self.samples]
+        return {'source_ages_s': ages, 'camera_skew_s': float(np.ptp(times)) if len(times) == len(self.cameras) else None}
+
     def snapshot(self, tick_time):
         from bfm.contracts.vision import proprioception
         sources = ('joints', *self.cameras)

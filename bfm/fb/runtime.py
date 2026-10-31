@@ -27,8 +27,10 @@ class VisualRuntime:
             raise ValueError('Task z must be [latent_dim] or [1,latent_dim]')
         return self.model.project_z(z).detach()
 
-    def load_task(self, path):
+    def load_task(self, path, *, require_bound=False):
         saved = torch.load(path, map_location='cpu', weights_only=True)
+        if require_bound and not isinstance(saved, dict):
+            raise ValueError('Evaluation requires checkpoint-bound task metadata')
         if isinstance(saved, dict):
             if saved.get('checkpoint_sha256') != self.checkpoint_sha256:
                 raise ValueError('Task z belongs to a different checkpoint')
