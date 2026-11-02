@@ -3,67 +3,203 @@
   "dataset_id": "recordings-sharpa-v3",
   "episodes": [
     {
-      "path": "episode-066b4f487745602ff745265daa50b61a12b33bd1bec14f3f02ce587f1db0e012.zarr",
+      "path": "episode-03a496dff1a3a181838a63bf6bdce16259309d534c10059271b150f1e8fedb37.zarr",
       "split": "train"
     },
     {
-      "path": "episode-1960daa57edec19d1e4c6123bf123d768c2736685e6a962638aea5a8316ccbd2.zarr",
+      "path": "episode-12815e2a9ab09b4f3fc71f2290118d032467e7384d4abaa07d7056d164c9abbb.zarr",
       "split": "train"
     },
     {
-      "path": "episode-1c86529cebdb6e51e4b4b476215374578ad407b97e3aa3e8f14a464d08815dbc.zarr",
+      "path": "episode-2092a284704bff324decf558eec383c430f242ad3449b06837147ab2a15f06e1.zarr",
       "split": "train"
     },
     {
-      "path": "episode-2a44efe12de58ba8f9373dba4c28b17ea514aa67b939410dfa0f0f390db1f717.zarr",
+      "path": "episode-23494c6d76fb4a3cb0186f258b4c15e581e53dc6f71a08e389f3ba24960888ab.zarr",
       "split": "train"
     },
     {
-      "path": "episode-3206247cef6971620b01c5d1198da8e9c7788875c1b63283362785fdb6fa1427.zarr",
+      "path": "episode-31809101c0092c329b8f004b3bef809abb09f6b810e37727dd443c1afa9f461e.zarr",
       "split": "train"
     },
     {
-      "path": "episode-3fec4735bf0372712554e7bdda38de88a99d7bdf3bda613affef892a5150a2e3.zarr",
+      "path": "episode-3a5794ece9ee115afd1ff72ca20bfc5c7e77ee21707afe12571abadbeed017ae.zarr",
       "split": "train"
     },
     {
-      "path": "episode-455706bf2a76cdf7151f6d60c66187fd447f783ba8181e7e329eccaa82add7de.zarr",
+      "path": "episode-44c52f6157d47dcb2e33d4087c265028fab17ce28cef728084123d538736763f.zarr",
       "split": "train"
     },
     {
-      "path": "episode-4e88891fff93c16cca039caba601093fb5fddff17c2157d74a1b1056b47b4a90.zarr",
+      "path": "episode-4ef17de37162ad1ebc07af4b9e368a3be59e6eb1a127dee57fda067a99ee1bee.zarr",
       "split": "train"
     },
     {
-      "path": "episode-5792b62c9058e1a3dcb9345146f3b51d7b166379e99b198b2e1eed9f82c25ae6.zarr",
+      "path": "episode-4f3f7922e13bf72f9b53e66b2b062a72d5f8151a3b4cb2cf7693de8078516a37.zarr",
       "split": "train"
     },
     {
-      "path": "episode-69a9c20997b041671778171b2ad1357f529a101fb912ce6ed012dd70bdaf7dcd.zarr",
+      "path": "episode-52860ec16651b99fd6c2f7494d4693d1bbd3dc24bb22107c17766b19f108b608.zarr",
       "split": "train"
     },
     {
-      "path": "episode-737b4e4d9f0b9cbd1525790bb186fb2c8e60d19857bf4ea6a60960c42c2936dc.zarr",
+      "path": "episode-53e78138019dbe9c9be78bd5c1ce5cc610b2cb48d10899ea0ca9a2716f301ebb.zarr",
       "split": "train"
     },
     {
-      "path": "episode-7e0db638f5e2784ae094208983c25c07c6a6542b658761537f665664ea2ab77c.zarr",
+      "path": "episode-58a2b4141621783541306020a8493e69d8bebeebdfb960e677d179166466090c.zarr",
       "split": "train"
     },
     {
-      "path": "episode-857b28656dca9fdf828b1211962d8bc462fe94cfd70f859c08d68b43111c14d8.zarr",
+      "path": "episode-5bad32a568e2f31f787b6437a337a864e66cece29a53b7bb349ba8f13d3af1fc.zarr",
       "split": "train"
     },
     {
-      "path": "episode-9efaf695f5588699bf1fbd14fbd4d70082e08dbd665c2727a12bf06d52e84680.zarr",
+      "path": "episode-5e5678ec4a5b5c84914b8e4faea81ad6c6f6aab2fe800326eb46c68b895e5ee3.zarr",
       "split": "train"
     },
     {
-      "path": "episode-d4f415f05f2f8b84e9746216b1b63b892c7e96767c2dcb43f473e6aa1fedfffb.zarr",
+      "path": "episode-60d0ede743e66a9e70845849d3a0b0d0f70089fb33f444b2615c5ed07bf5e2f0.zarr",
       "split": "train"
     },
     {
-      "path": "episode-e097f7cc94d2421965a1dfb24cc978ddc2ec1f329092819e261e4636ba90fdf6.zarr",
+      "path": "episode-639961a6cbeb9928c61e895dd464296a73b9f06b638c8368eb7d7876f41618e5.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-67c1801c9e10ea04cc909843b77b3e6939c7863d35d1a32901e99f5dc87f7ea2.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-6aa93b2ccc1c5ce66786161784280342888123d2a9c2895d46b1fa4124dc58b9.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-7830fafab8f3726ae03e4d916a48667a1f102735b25536706b6dc679840eb128.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-860d7c03eb773049b16d4aa7156b45ebd54d0ff0d58e6a5136356557328ca195.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-86b197c7c6da101a6647d5b877e5a59229cec4f9789deaf26638f10fa6293285.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-8c107e9860cc64ca26d7350ed2450934043f1257539aadfdd0297ceb996a9efc.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-90529b4c2bc31162fca1dc5892fba46cfd927e9a0c1e9c9dd9f344f598bcf6a6.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-985899d43a4604e26167ab9c4b4c734cfe656620326c64b63f19204c133e1045.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-a0fefa52a67fc1a6d7c98441863fbaed2f1c42568c160572267cfa95eaa80a7e.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-a1c51466a386381741e966fc55813ddda4dcc3ba6af0208a32e58d0246b88617.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-a457c85cc18aae5520e80562964a3a26d8878abf96ef60a54b9fd5b3aa64f5e3.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-a479aa370ae0c66a88164fca78a728d73a59b098ee6d7c4f1fd4d0c9697dcd8c.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-a76f7192ff1d93dff54fc8636eef4b2b0f41fb39cff37b675bfd8f0461854a41.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-aece5c81d48ca4cd35866fe7c1a2bdc05b8df126f9fbdaefbbfb27ba7c2b95b2.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-b1207a5e48eb5cb7ee4db45c7136641b002bd5de489b5be2067cf5ea67c40935.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-b9422a235b844b3b62f1abac1142971c43d72cede5d44126f754fbd39efe8945.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-bfabc15d1822c30132c6a173d82c0067840062bccfeb15556991f818876f79ee.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-c1f8160ddda1e38bab11cf6fe0ab92307fc5b9141f25e0fb48283020b93a7786.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-c25f66ccfa7fd7d8b38eeb452c26e4da9d27c2569f3ef4b1f00e3ac789e90e0e.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-c27768deafaec07fb35dcfdcdbe0ae3c423f3f05029998549480ca670c69113c.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-c4dea3ce2af4679893f1149ad5423bd76d8aa200377e3e676630f9ed1773240d.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-c8e47587d0c661925299ae58c8da898ea01779c96da2e6d3ac49b57d637121be.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-c933eb5d519e3f363eca5d5d857fe0830cfb24dcfb953b9099dd8aaa5a086a85.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-caece81fdbee74516d3c47435304bd03ef873f88368dcd019b05450fccd6882b.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-ccdf02903456148b05b9569d9ad9b0bb2d4dfc2cc08a645c62e3e28eeb9ff1a8.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-d08c0a4cd8ae90219c9d4da23acd10924e6a4efe839a218ca4dac33b6bb3d685.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-d481569950fcd3dc8a987c4bfce4a03b8a32912492ab4779216d66ed3883b1f2.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-d519adb61cf3db2c23d9b4ed604cd083bd6c0e1364269ae74189e67d877cab1d.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-dff5a3dcd0630d0d0fb8612c5e89f6093b688c90ac4fe6ad184e64f7148134c6.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-e3e5840646ac2ce204a4bdefaa26abb28b146f62ff3846c80e9634a6186fc44b.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-e88d00d6f040230895a8c523bd40b173cabe753a656e2ff8b6ab0ad7dc8051c6.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-eac29c50f9d53ad5ace91e313c801b8913e9adeec55d3e3559356c6c3bcb5f19.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-f2c5405a5b6c9bbac178ffdca3fca48b1988e81993fd979f15bfa785cc4c9eb5.zarr",
+      "split": "train"
+    },
+    {
+      "path": "episode-fff18fc28dd4fa1c8b4dc623e4ab68a8840974df7f77bce40fde466babc9ae05.zarr",
       "split": "train"
     }
   ]
