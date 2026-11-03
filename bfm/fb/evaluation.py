@@ -124,6 +124,8 @@ class Evaluation:
                 start = self.clock()
                 normalized = self.runtime.act(obs)
                 row['inference_latency_s'] = self.clock()-start
+                row.update(getattr(self.runtime, 'last_profile', {}))
+                row['inference_precision'] = getattr(self.runtime, 'precision', 'fp32')
                 raw = ActionNormalizer().physical(normalized).numpy()
                 applied, limited = self.safety.apply(raw, obs['proprio'])
                 row.update(normalized_action=np.asarray(normalized).tolist(), raw_physical_action=raw.tolist(),

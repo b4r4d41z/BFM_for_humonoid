@@ -16,11 +16,16 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--config',default=str(Path(__file__).resolve().parents[1]/'configs/runtime/isaac_ros2.yaml'))
     p.add_argument('--checkpoint');p.add_argument('--task-z');p.add_argument('--device',default='cpu')
+    p.add_argument('--precision', choices=['fp32', 'bf16', 'fp16'])
+    p.add_argument('--profile-inference', action=argparse.BooleanOptionalAction, default=None)
     p.add_argument('--mode', choices=['shadow', 'closed-loop'])
     p.add_argument('--warmup-ticks', type=int)
     p.add_argument('--max-policy-steps', type=int)
     p.add_argument('--max-arm-delta-rad', type=float)
-    a=p.parse_args();cfg=yaml.safe_load(Path(a.config).read_text());validate_ros_config(cfg)
+    a=p.parse_args();cfg=yaml.safe_load(Path(a.config).read_text())
+    if a.precision is not None: cfg['inference_precision'] = a.precision
+    if a.profile_inference is not None: cfg['profile_inference'] = a.profile_inference
+    validate_ros_config(cfg)
     mode = a.mode or cfg.get('mode', 'shadow')
     warmup = a.warmup_ticks if a.warmup_ticks is not None else cfg.get('warmup_ticks', 10)
     maximum = a.max_policy_steps if a.max_policy_steps is not None else cfg.get('max_policy_steps', 300)
@@ -41,7 +46,8 @@ def main():
                            mode=mode, checkpoint=checkpoint, task_z=task)
     print(f'Rollout logs: {logger.directory}', flush=True)
     try:
-        runtime=VisualRuntime(checkpoint,a.device);runtime.load_task(task, require_bound=True)
+        runtime=VisualRuntime(checkpoint,a.device, precision=cfg.get('inference_precision', 'fp32'),
+                              profile=cfg.get('profile_inference', False));runtime.load_task(task, require_bound=True)
     except Exception as exc:
         logger.close(f'initialization failed: {exc}')
         raise
