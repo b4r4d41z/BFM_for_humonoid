@@ -10,14 +10,25 @@ def main():
     from bfm.fb.runtime import VisualRuntime
     from bfm.fb.latents import candidates, episode_embeddings, visualize
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--checkpoint',required=True)
+    p.add_argument('--checkpoint')
+    p.add_argument('--analysis',help='episode_z.pt from analyze_episode_z.py; no model inference')
+    p.add_argument('--output-dir',help='New output directory for episode-z PCA')
     p.add_argument('--dataset')
     p.add_argument('--embeddings',help='Cached trained B(s) from build_task_z.py')
     p.add_argument('--task-z',nargs='*',default=[])
     p.add_argument('--random-count',type=int,default=32)
-    p.add_argument('--output',required=True,help='Output stem for CSV and SVG')
+    p.add_argument('--output',help='Output stem for CSV and SVG')
     p.add_argument('--method',choices=['pca','umap'],default='pca')
-    a=p.parse_args();runtime=VisualRuntime(a.checkpoint)
+    a=p.parse_args()
+    if a.analysis:
+        if not a.output_dir or a.method != 'pca' or a.checkpoint or a.dataset or a.embeddings or a.task_z or a.output:
+            p.error('--analysis requires --output-dir and PCA, without legacy source options')
+        import json
+        from bfm.fb.latent_analysis import visualize_analysis
+        print(json.dumps(visualize_analysis(a.analysis,a.output_dir),indent=2))
+        return
+    if not a.checkpoint or not a.output: p.error('Legacy mode requires --checkpoint and --output')
+    runtime=VisualRuntime(a.checkpoint)
     points=list(candidates(runtime,a.random_count)['vectors']);labels=[{'source':'random'} for _ in points]
     episodes=[]
     if a.embeddings:
