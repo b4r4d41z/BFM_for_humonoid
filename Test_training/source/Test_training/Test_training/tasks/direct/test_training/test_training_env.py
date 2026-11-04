@@ -375,6 +375,12 @@ class TestTrainingEnv(DirectRLEnv):
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
         terminated = torch.zeros((self.num_envs,), device=self.device, dtype=torch.bool)
         time_out = self.episode_length_buf >= self.max_episode_length - 1
+        # DirectRLEnv automatically resets done environments before returning
+        # observations. Opt-in recorder/evaluator capture must happen here,
+        # after physics and before _reset_idx, to retain true terminal states.
+        observer = getattr(self, "_bfm_pre_reset_observer", None)
+        if observer is not None:
+            observer(terminated, time_out)
         return terminated, time_out
 
     def _reset_objects(self, env_ids: Sequence[int]) -> None:

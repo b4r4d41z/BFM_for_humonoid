@@ -5,8 +5,6 @@ from typing import Any, Callable
 
 import torch
 
-from bc.temporal import DEFAULT_TEMPORAL_CONTRACT
-
 
 @dataclass
 class PolicySchedulerStats:
@@ -23,7 +21,7 @@ class PolicyScheduler:
     actions; the first tick always runs inference to initialize the cache.
     """
 
-    def __init__(self, *, policy_hz: float = DEFAULT_TEMPORAL_CONTRACT.policy_hz, control_hz: float = DEFAULT_TEMPORAL_CONTRACT.isaaclab_control_hz) -> None:
+    def __init__(self, *, policy_hz: float = 10.0, control_hz: float = 60.0) -> None:
         if policy_hz <= 0.0:
             raise ValueError(f"policy_hz must be > 0, got {policy_hz}")
         if control_hz <= 0.0:

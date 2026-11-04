@@ -77,8 +77,9 @@ _build
 # Teleop Recorded Dataset
 datasets
 
-# Tests
-tests/
+# Keep the new FB source tests versioned; retain other local test exclusions.
+tests/*
+!tests/fb/
 
 # Docker history
 .isaac-lab-docker-history
@@ -177,3 +178,15 @@ wandb/
 # *.h5
 __pycache__/
 *.pyc
+
+# Local files
+tools/bfm.patch
+bfm-venv/
+
+# Generated canonical training stores and manifests.
+/data/zarr/*
+!/data/zarr/.gitkeep
+/zarr_training_pipeline.patch
+
+# Disposable frozen visual features.
+/data/feature_cache/

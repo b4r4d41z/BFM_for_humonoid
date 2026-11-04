@@ -1,10 +1,18 @@
-from .action_adapter import ActionAdapter
-from .camera_bridge import IsaacCameraBridge
-from .env_factory import create_isaaclab_env
-from .observation_adapter import ObservationAdapter
-from .policy_runner import BCPolicyRunner
-from .policy_scheduler import PolicyScheduler
-from .rollout_recorder import RolloutRecorder
+"""Lazy exports: importing the FB runtime does not import the BC policy stack."""
+from importlib import import_module
+
+_MODULES = {
+    "ActionAdapter": "action_adapter", "IsaacCameraBridge": "camera_bridge",
+    "create_isaaclab_env": "env_factory", "ObservationAdapter": "observation_adapter",
+    "BCPolicyRunner": "policy_runner", "PolicyScheduler": "policy_scheduler",
+    "RolloutRecorder": "rollout_recorder", "BFMPolicyRunner": "bfm_policy_runner",
+}
+
+
+def __getattr__(name):
+    if name not in _MODULES:
+        raise AttributeError(name)
+    return getattr(import_module(f"{__name__}.{_MODULES[name]}"), name)
 
 __all__ = [
     "ActionAdapter",
@@ -14,4 +22,5 @@ __all__ = [
     "PolicyScheduler",
     "RolloutRecorder",
     "create_isaaclab_env",
+    "BFMPolicyRunner",
 ]
