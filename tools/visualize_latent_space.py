@@ -12,6 +12,7 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--checkpoint')
     p.add_argument('--analysis',help='episode_z.pt from analyze_episode_z.py; no model inference')
+    p.add_argument('--cluster-dir',help='Cluster tasks built from this exact analysis')
     p.add_argument('--output-dir',help='New output directory for episode-z PCA')
     p.add_argument('--dataset')
     p.add_argument('--embeddings',help='Cached trained B(s) from build_task_z.py')
@@ -25,8 +26,9 @@ def main():
             p.error('--analysis requires --output-dir and PCA, without legacy source options')
         import json
         from bfm.fb.latent_analysis import visualize_analysis
-        print(json.dumps(visualize_analysis(a.analysis,a.output_dir),indent=2))
+        print(json.dumps(visualize_analysis(a.analysis,a.output_dir,a.cluster_dir),indent=2))
         return
+    if a.cluster_dir: p.error('--cluster-dir requires --analysis')
     if not a.checkpoint or not a.output: p.error('Legacy mode requires --checkpoint and --output')
     runtime=VisualRuntime(a.checkpoint)
     points=list(candidates(runtime,a.random_count)['vectors']);labels=[{'source':'random'} for _ in points]

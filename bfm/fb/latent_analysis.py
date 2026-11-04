@@ -102,7 +102,7 @@ def analyze(runtime, references, task_z, output, batch_size=8):
     return summary
 
 
-def visualize_analysis(artifact, output):
+def visualize_analysis(artifact, output, cluster_dir=None):
     saved=torch.load(artifact,map_location='cpu',weights_only=True);z,g=validate_artifact(saved)
     # Fit only episodes; the global task is an out-of-sample projection.
     coordinates=pca(z)
@@ -115,15 +115,49 @@ def visualize_analysis(artifact, output):
     summary=dict(pc1_explained_variance_ratio=float(ratios[0]),pc2_explained_variance_ratio=float(ratios[1]),
                  pc1_pc2_cumulative=float(ratios.sum()),variance_defined=energy>0,fit='episode_z only',
                  checkpoint_sha256=saved['checkpoint_sha256'],analysis_sha256=checkpoint_digest(artifact))
+    cluster_xy = np.empty((0, 2))
+    if cluster_dir is not None:
+        from .cluster_analysis import load_cluster_tasks
+        tasks, membership = load_cluster_tasks(cluster_dir, artifact, saved)
+        cluster_xy = (tasks-z.mean(0))@axes[:2].T
+        for row in rows:
+            row['cluster_id'] = membership.get(row['episode_id'], '') if row['kind'] == 'episode' else ''
+        rows.extend(dict(episode_id=f'cluster_{i}_task_z', kind='cluster_task', cluster_id=i,
+                         pc1=float(x), pc2=float(y)) for i, (x, y) in enumerate(cluster_xy))
+        summary['cluster_summary_sha256'] = checkpoint_digest(Path(cluster_dir)/'cluster_summary.json')
+        summary['note'] = 'PCA is a 2D projection, not evidence for cluster structure or optimal k.'
     output=Path(output);output.mkdir(parents=True,exist_ok=False)
     write_csv(output/'pca_coordinates.csv',list(rows[0]),rows);write_json(output/'pca_summary.json',summary)
     # Standalone SVG avoids a plotting dependency and offers full-ID hover labels.
-    points=np.r_[coordinates,global_xy];span=np.ptp(points,axis=0);xy=(points-points.min(0))/np.where(span>0,span,1)*640+60
+    points=np.r_[coordinates,global_xy,cluster_xy];span=np.ptp(points,axis=0);xy=(points-points.min(0))/np.where(span>0,span,1)*640+60
     marks=[]
     for i,((x,y),row) in enumerate(zip(xy,rows)):
         color='crimson' if row['kind']=='global' else '#2563eb';radius=8 if row['kind']=='global' else 4
         label='GLOBAL' if row['kind']=='global' else str(i+1)
         marks.append(f'<g><title>{html.escape(row["episode_id"])}</title><circle cx="{x}" cy="{760-y}" r="{radius}" fill="{color}"/><text x="{x+7}" y="{753-y}" font-size="10">{label}</text></g>')
+    if cluster_dir is not None:
+        marks = []
+        for (x, y), row in zip(xy, rows):
+            y = 760-y
+            kind, cluster = row['kind'], row['cluster_id']
+            color = f'hsl({int(cluster)*137.508%360:.2f},65%,38%)' if cluster != '' else 'black'
+            if kind == 'global':
+                shape = f'<path d="M{x-9},{y}h18 M{x},{y-9}v18" stroke="black" stroke-width="4"/>'
+                label = 'GLOBAL'
+            elif kind == 'cluster_task':
+                shape = f'<rect x="{x-7}" y="{y-7}" width="14" height="14" fill="{color}" stroke="black"/>'
+                label = f'C{cluster} TASK'
+            else:
+                shape = f'<circle cx="{x}" cy="{y}" r="4" fill="{color}"/>'
+                label = f'{ids.index(row["episode_id"])+1}:C{cluster}'
+            marks.append(f'<g><title>{html.escape(row["episode_id"])}</title>{shape}<text x="{x+10}" y="{y-8}" font-size="10">{label}</text></g>')
+        legend = 'Circles: episodes (row:C cluster); squares: cluster tasks; black +: global.'
+        (output/'episode_z_cluster_pca.svg').write_text(
+            '<svg xmlns="http://www.w3.org/2000/svg" width="900" height="820">'
+            '<rect width="100%" height="100%" fill="white"/>'
+            f'<text x="25" y="25">{legend}</text>'
+            '<text x="25" y="45">PC1 horizontal, PC2 vertical; fit on episodes only.</text>'+''.join(marks)+'</svg>')
+        return summary
     (output/'episode_z_pca.svg').write_text('<svg xmlns="http://www.w3.org/2000/svg" width="820" height="820"><rect width="100%" height="100%" fill="white"/><text x="25" y="25">Episode z (blue, row numbers); global task (red). PC1 horizontal, PC2 vertical.</text>'+''.join(marks)+'</svg>')
     return summary
 
