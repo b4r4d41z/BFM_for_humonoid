@@ -18,8 +18,11 @@ def validate_evaluation(mode, warmup_ticks, max_policy_steps, max_arm_delta_rad)
         raise ValueError('warmup_ticks must be a nonnegative integer')
     if type(max_policy_steps) is not int or max_policy_steps < 1:
         raise ValueError('max_policy_steps must be a positive integer')
-    if isinstance(max_arm_delta_rad, bool) or not math.isfinite(max_arm_delta_rad) or max_arm_delta_rad <= 0:
-        raise ValueError('max_arm_delta_rad must be positive and finite')
+    # None explicitly disables only the per-tick arm delta limiter.
+    if max_arm_delta_rad is not None and (
+            isinstance(max_arm_delta_rad, bool) or not math.isfinite(max_arm_delta_rad)
+            or max_arm_delta_rad <= 0):
+        raise ValueError('max_arm_delta_rad must be positive and finite, or None to disable the limiter')
 
 
 class RuntimeSafetyFilter:
@@ -34,6 +37,8 @@ class RuntimeSafetyFilter:
         if raw.shape != (26,):
             raise ValueError('Physical action must be exactly 26D')
         self.normalizer.normalize(raw)  # Validate before limiting; never repair corruption.
+        if self.limit is None:
+            return raw.copy(), []  # Bypass slew limiter; keep absolute physical bounds checks.
         if self.previous is None:
             q = np.asarray(measured_proprio).reshape(-1)
             if q.shape != (116,) or not np.isfinite(q).all():

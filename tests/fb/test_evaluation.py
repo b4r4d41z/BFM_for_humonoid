@@ -68,6 +68,20 @@ def test_shadow_never_calls_publisher(tmp_path):
     assert evaluation.logger.summary['published_policy_steps'] == 0
 
 
+def test_no_arm_delta_limit_keeps_raw_action_and_physical_bounds():
+    safety = RuntimeSafetyFilter(None)
+    action = ActionNormalizer().physical(torch.full((26,), 0.8)).numpy()
+    applied, limited = safety.apply(action, proprio())
+    np.testing.assert_array_equal(applied, action)
+    assert limited == []
+    safety.commit(applied)
+    second, limited = safety.apply(action, proprio())
+    np.testing.assert_array_equal(second, action)
+    assert limited == []
+    with pytest.raises(ValueError):
+        safety.apply(np.full(26, 999.), proprio())
+
+
 def test_safety_small_change_and_bad_actions():
     safety = RuntimeSafetyFilter(.1)
     action = physical(); action[ARMS] += .02

@@ -22,6 +22,8 @@ def main():
     p.add_argument('--warmup-ticks', type=int)
     p.add_argument('--max-policy-steps', type=int)
     p.add_argument('--max-arm-delta-rad', type=float)
+    p.add_argument('--disable-arm-delta-limit', action='store_true',
+                   help='Simulation-only: bypass per-tick arm target delta limiting (physical bounds still checked)')
     a=p.parse_args();cfg=yaml.safe_load(Path(a.config).read_text())
     if a.precision is not None: cfg['inference_precision'] = a.precision
     if a.profile_inference is not None: cfg['profile_inference'] = a.profile_inference
@@ -29,7 +31,10 @@ def main():
     mode = a.mode or cfg.get('mode', 'shadow')
     warmup = a.warmup_ticks if a.warmup_ticks is not None else cfg.get('warmup_ticks', 10)
     maximum = a.max_policy_steps if a.max_policy_steps is not None else cfg.get('max_policy_steps', 300)
-    delta = a.max_arm_delta_rad if a.max_arm_delta_rad is not None else cfg['safety']['max_arm_delta_rad']
+    if a.disable_arm_delta_limit and a.max_arm_delta_rad is not None:
+        p.error('--disable-arm-delta-limit and --max-arm-delta-rad cannot be used together')
+    delta = (None if a.disable_arm_delta_limit else
+             a.max_arm_delta_rad if a.max_arm_delta_rad is not None else cfg['safety']['max_arm_delta_rad'])
     validate_evaluation(mode, warmup, maximum, delta)
     checkpoint=a.checkpoint or cfg['checkpoint'];task=a.task_z or cfg['task_z']
     if not checkpoint or not task:p.error('Supply checkpoint and task-z through CLI or config')
@@ -44,6 +49,8 @@ def main():
         raise RuntimeError('Source ROS2 and dynamic_biped message packages before running this endpoint') from exc
     logger = RolloutLogger(Path(cfg['logging']['output_root'])/uuid.uuid4().hex,
                            mode=mode, checkpoint=checkpoint, task_z=task)
+    logger.summary.update(arm_delta_limit_enabled=delta is not None,
+                          max_arm_delta_rad=delta)
     print(f'Rollout logs: {logger.directory}', flush=True)
     try:
         runtime=VisualRuntime(checkpoint,a.device, precision=cfg.get('inference_precision', 'fp32'),
