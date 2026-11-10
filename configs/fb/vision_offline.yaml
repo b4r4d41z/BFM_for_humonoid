@@ -8,7 +8,7 @@ seed: 0
 device: cuda
 
 batch_size: 64
-training_steps: 100000
+training_steps: 300000
 checkpoint_interval: 10000
 logging_interval: 10
 
@@ -36,9 +36,9 @@ model:
 
 train:
   discount: 0.99
-  tau: 0.01
-  learning_rate_fb: 0.00002
-  learning_rate_actor: 0.00003
+  tau: 0.005
+  learning_rate_fb: 0.00001
+  learning_rate_actor: 0.00001
   orthonormalization_coefficient: 1.0
   gradient_clip_norm: 10.0
   fb_pessimism: 0.0
