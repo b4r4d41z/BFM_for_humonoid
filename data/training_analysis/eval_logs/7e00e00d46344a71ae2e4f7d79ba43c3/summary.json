@@ -1,0 +1,13 @@
+{
+  "mode": "closed-loop",
+  "checkpoint": "runs/fb/zarr/2e8a7703c769445e92438f9e5b365798/last.pt",
+  "task_z": "task_z/sorting_food_300k.pt",
+  "total_policy_steps": 78,
+  "published_policy_steps": 65,
+  "warmup_steps": 10,
+  "safety_interventions": 71,
+  "invalid_stale_observations": 3,
+  "termination_reason": "RuntimeError: Future/stale visual observation; stopping publication",
+  "mean_inference_latency_s": 0.047172318053150475,
+  "max_inference_latency_s": 0.15699380899968673
+}

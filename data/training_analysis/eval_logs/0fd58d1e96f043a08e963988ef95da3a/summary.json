@@ -1,0 +1,13 @@
+{
+  "mode": "closed-loop",
+  "checkpoint": "runs/fb/zarr/2e8a7703c769445e92438f9e5b365798/last.pt",
+  "task_z": "runs/latent_analysis/bfm_300k_20261109_040024/clusters/cluster_0_task_z.pt",
+  "total_policy_steps": 243,
+  "published_policy_steps": 227,
+  "warmup_steps": 10,
+  "safety_interventions": 224,
+  "invalid_stale_observations": 6,
+  "termination_reason": "RuntimeError: Future/stale visual observation; stopping publication",
+  "mean_inference_latency_s": 0.047425804966112664,
+  "max_inference_latency_s": 0.16228857099849847
+}
