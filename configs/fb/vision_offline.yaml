@@ -1,6 +1,6 @@
-dataset_schema: sharpa_v3
+dataset_schema: sharpa_v4
 observation_profile: vision_proprio_v1
-dataset_manifest: data/zarr/manifest.json
+dataset_manifest: data/zarr_15hz/manifest.json
 output_dir: runs/fb/vision
 outcome: all
 
@@ -35,7 +35,7 @@ model:
   noise_clip: 0.3
 
 train:
-  discount: 0.99
+  discount: 0.993322
   tau: 0.005
   learning_rate_fb: 0.00001
   learning_rate_actor: 0.00001

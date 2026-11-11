@@ -28,7 +28,8 @@ def write_json(path, value):
 def source_dataset(path):
     with tempfile.TemporaryDirectory() as temp:
         manifest = Path(temp)/'reference.json'
-        write_json(manifest, {'schema_version':'3.0.0', 'dataset_id':'episode-z-diagnostic',
+        import zarr
+        write_json(manifest, {'schema_version':zarr.open_group(str(path),mode='r').attrs['schema_version'], 'dataset_id':'episode-z-diagnostic',
                              'episodes':[{'path':str(Path(path).resolve()), 'split':'train'}]})
         return SharpaDataset(manifest, observation_profile='vision_proprio_v1')
 

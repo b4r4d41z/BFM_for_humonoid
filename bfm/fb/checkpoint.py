@@ -29,7 +29,7 @@ def restore_rng(state):
 
 def save_checkpoint(path, agent, replay, dataset, reference_states, reference_indices, run_config):
     payload = {
-        "format": "vanilla_fb_sharpa_v3" if getattr(dataset, "schema_version", None) == "3.0.0" else "vanilla_fb_v1",
+        "format": ("vanilla_fb_sharpa_v4" if dataset.schema_version == "4.0.0" else "vanilla_fb_sharpa_v3") if getattr(dataset, "schema_version", None) in ("3.0.0","4.0.0") else "vanilla_fb_v1",
         "schema_version": getattr(dataset, "schema_version", SCHEMA_VERSION),
         "model_config": asdict(agent.model.cfg), "train_config": asdict(agent.cfg),
         "model": agent.model.state_dict(), "target_F": agent.target_F.state_dict(), "target_B": agent.target_B.state_dict(),
@@ -40,6 +40,9 @@ def save_checkpoint(path, agent, replay, dataset, reference_states, reference_in
         "dataset_manifest": dataset.manifest, "run_config": run_config,
         "reference_states": reference_states.cpu(), "reference_indices": reference_indices,
     }
+    if getattr(dataset,'schema_version',None)=='4.0.0':
+        payload['execution']=dataset.roots[0].attrs['execution']
+        if any(r.attrs['execution']!=payload['execution'] for r in dataset.roots):raise ValueError('Mixed executor configurations')
     payload['observation_profile'] = agent.model.cfg.observation_profile
     if agent.model.observation_encoder is not None:
         payload['observation_identity'] = agent.model.observation_encoder.identity()
@@ -62,10 +65,14 @@ def save_checkpoint(path, agent, replay, dataset, reference_states, reference_in
 
 def load_payload(path):
     payload = torch.load(path, map_location="cpu", weights_only=True)
-    if payload.get("format") == "vanilla_fb_sharpa_v3":
-        from bfm.contracts.sharpa import SharpaContract, VERSION, FIELDS
-        if payload.get("schema_version") != VERSION or payload.get("contract") != SharpaContract().to_dict() or payload.get("state_fields") != list(FIELDS):
+    if payload.get("format") in ("vanilla_fb_sharpa_v3","vanilla_fb_sharpa_v4"):
+        from bfm.contracts.sharpa import contract_for, FIELDS
+        version="4.0.0" if payload["format"].endswith("v4") else "3.0.0"
+        if payload.get("schema_version") != version or payload.get("contract") != contract_for(version).to_dict() or payload.get("state_fields") != list(FIELDS):
             raise ValueError("Sharpa checkpoint contract/order mismatch")
+        if version=='4.0.0':
+            from bfm.contracts.sharpa import execution_configuration
+            execution_configuration(payload['execution'])
         cfg = ModelConfig(**payload["model_config"])
         if payload.get('observation_profile') != cfg.observation_profile:
             raise ValueError('Checkpoint observation profile mismatch; old collection-v2 checkpoints are unsupported')

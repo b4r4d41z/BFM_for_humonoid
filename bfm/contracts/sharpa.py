@@ -102,3 +102,41 @@ class SharpaContract:
                 "bounds_source_path": "models/robots/s40_sharpa/assembly/s40_sharpa_two_cameras.xml",
                 "bounds_source_sha256": MODEL_SHA256,
                 "action_units": ["rad"]*7 + ["controller_0_100"]*6 + ["rad"]*7 + ["controller_0_100"]*6}
+
+
+@dataclass
+class SharpaV4Contract(SharpaContract):
+    """Separate execution contract; never an implicit migration of collection v3."""
+    policy_dt: float = 1.0 / 15.0
+
+    def __post_init__(self):
+        if self.policy_dt != 1/15:raise ValueError('v4 requires 15Hz policy timing')
+
+    def to_dict(self):
+        value = super().to_dict()
+        value.update(version=4, policy_dt=self.policy_dt,
+                     arm_semantics='absolute_high_level_targets_common_executor',
+                     policy_period_ns={'numerator': 1_000_000_000, 'denominator': 15},
+                     arm_control_hz=100, hand_control_hz=50, physics_hz=300)
+        return value
+
+
+def contract_for(version):
+    if version == '3.0.0': return SharpaContract()
+    if version == '4.0.0': return SharpaV4Contract()
+    raise ValueError('Unsupported Sharpa schema; no implicit migration')
+
+
+def execution_configuration(execution):
+    """Pin the authoritative Synthetic JSON bytes, not a re-serialized hash."""
+    import hashlib
+    import json
+    from pathlib import Path
+    content = (Path(__file__).parents[2]/'configs/data_contract/bfm_executor_v4.json').read_bytes()
+    expected = json.loads(content)
+    if (execution.get('configuration') != expected
+            or execution.get('controller_config_sha256') != hashlib.sha256(content).hexdigest()
+            or execution.get('entry_topic') != '/bfm/action'
+            or execution.get('status_topic') != '/bfm/execution_status'):
+        raise ValueError('Unknown v4 executor configuration/hash/interface')
+    return expected

@@ -24,7 +24,7 @@ def episode_embeddings(runtime, source, batch_size=8):
     if source.is_file():
         manifest = json.loads(source.read_text())
         if (
-            manifest.get('schema_version') != '3.0.0'
+            manifest.get('schema_version') not in ('3.0.0','4.0.0')
             or not manifest.get('dataset_id')
             or any(
                 e['split'] not in ('train', 'validation', 'test')
@@ -53,7 +53,7 @@ def episode_embeddings(runtime, source, batch_size=8):
         manifest.write_text(
             json.dumps(
                 {
-                    'schema_version': '3.0.0',
+                    'schema_version': zarr.open_group(str(paths[0]), mode='r').attrs['schema_version'],
                     'dataset_id': 'task-references',
                     'episodes': [
                         {'path': str(p), 'split': 'train'}

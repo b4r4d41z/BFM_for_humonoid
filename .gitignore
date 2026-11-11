@@ -190,3 +190,7 @@ bfm-venv/
 
 # Disposable frozen visual features.
 /data/feature_cache/
+
+# Unified executor v4 derived episodes; legacy data/zarr remains separate.
+data/zarr_15hz/*
+!data/zarr_15hz/.gitkeep

@@ -93,7 +93,11 @@ class RolloutLogger:
 
 class Evaluation:
     def __init__(self, runtime, buffer, logger, *, mode='shadow', warmup_ticks=10,
-                 max_policy_steps=300, max_arm_delta_rad=.1, clock=time.monotonic):
+                 max_policy_steps=300, max_arm_delta_rad=.1, clock=time.monotonic, control_contract_version=3):
+        if control_contract_version not in (3,4):raise ValueError('Unknown evaluation contract')
+        if control_contract_version==4:
+            runtime.require_v4()
+            max_arm_delta_rad=None
         validate_evaluation(mode, warmup_ticks, max_policy_steps, max_arm_delta_rad)
         self.runtime, self.buffer, self.logger = runtime, buffer, logger
         self.mode, self.warmup_ticks, self.maximum = mode, warmup_ticks, max_policy_steps
@@ -149,7 +153,8 @@ class Evaluation:
                     self.safety.commit(applied)  # Virtual previous applied target for diagnostics.
                 else:
                     check_publishers()
-                    publish(applied)
+                    publication=publish(applied)
+                    if isinstance(publication,dict):row.update(publication)
                     self.safety.commit(applied)
                     row.update(published=True, publication_status='published')
         except Exception as exc:

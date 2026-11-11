@@ -56,6 +56,12 @@ class VisualRuntime:
         self.checkpoint_sha256 = checkpoint_digest(checkpoint)
         self.z = None
 
+    def require_v4(self):
+        from bfm.contracts.sharpa import SharpaV4Contract, execution_configuration
+        if self.payload.get('format')!='vanilla_fb_sharpa_v4' or self.payload.get('contract')!=SharpaV4Contract().to_dict():
+            raise ValueError('v4 runtime requires v4-trained checkpoint; no legacy relabeling')
+        execution_configuration(self.payload['execution'])
+
     def task(self, value):
         z = torch.as_tensor(value, dtype=torch.float32, device=self.model.device)
         if z.shape == (self.model.cfg.latent_dim,):
@@ -138,13 +144,17 @@ class VisualRuntime:
 
 
 def validate_ros_config(config):
-    from bfm.contracts.sharpa import SharpaContract
+    from bfm.contracts.sharpa import SharpaContract, SharpaV4Contract
+    v4=config.get('control_contract_version',3)==4
+    if config.get('control_contract_version',3) not in (3,4):raise ValueError('Unknown runtime contract')
     if (config['cameras'] != list(CAMERAS) or config['proprio_order'] != 'vision_proprio_v1'
             or config['action_dim'] != 26 or config['normalized_bounds'] != [-1,1]
             or config['physical_bounds'] != 'SharpaContract'
-            or config['policy_hz'] != 1/SharpaContract().policy_dt):
+            or config['policy_hz'] != (15 if v4 else 1/SharpaContract().policy_dt)):
         raise ValueError('ROS configuration differs from checkpoint observation/action contract')
     validate_inference_config(config.get('inference_precision', 'fp32'), config.get('profile_inference', False))
+    if v4 and (not config.get('use_sim_time') or config['output_topics']!={'action':'/bfm/action'} or config.get('execution_status_topic')!='/bfm/execution_status'):
+        raise ValueError('Invalid v4 simulation interface')
     topics=[config['joint_topic'],*config['camera_topics'].values(),*config['output_topics'].values()]
-    if set(config['camera_topics'])!=set(CAMERAS) or set(config['output_topics'])!={'arm','hand','action'} or len(set(topics))!=len(topics) or any(not isinstance(t,str) or not t.startswith('/') for t in topics):
+    if set(config['camera_topics'])!=set(CAMERAS) or set(config['output_topics'])!=({'action'} if v4 else {'arm','hand','action'}) or len(set(topics))!=len(topics) or any(not isinstance(t,str) or not t.startswith('/') for t in topics):
         raise ValueError('Invalid or duplicate ROS topics')

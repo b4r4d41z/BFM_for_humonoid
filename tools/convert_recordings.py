@@ -11,9 +11,10 @@ def main():
     from bfm.data.recordings import prepare
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('recordings', type=Path)
+    parser.add_argument('--contract',choices=['v3','v4'],default='v4')
     args = parser.parse_args()
     policy = yaml.safe_load((ROOT/'configs/data_conversion/sharpa_v3.yaml').read_text())
-    print(prepare(args.recordings, ROOT/'data/zarr', policy))
+    print(prepare(args.recordings, ROOT/('data/zarr_15hz' if args.contract=='v4' else 'data/zarr'), policy, expected_version=int(args.contract[1:])))
 
 
 if __name__ == '__main__':

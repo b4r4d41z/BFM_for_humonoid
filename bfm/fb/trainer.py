@@ -83,11 +83,11 @@ def train(config, *, resume=None):
     visual = profile == "vision_proprio_v1"
 
     if profile not in ("task56", "vision_proprio_v1") or (
-        visual and schema != "sharpa_v3"
+        visual and schema not in ("sharpa_v3","sharpa_v4")
     ):
         raise ValueError("Observation profile incompatible with dataset schema")
 
-    if schema == "sharpa_v3":
+    if schema in ("sharpa_v3","sharpa_v4"):
         from bfm.data.sharpa import SharpaDataset
 
         data = SharpaDataset(
@@ -96,6 +96,7 @@ def train(config, *, resume=None):
             observation_profile=profile,
             outcome=cfg.get("outcome", "all"),
         )
+        if data.schema_version != ('4.0.0' if schema=='sharpa_v4' else '3.0.0'):raise ValueError('Training dataset schema mismatch')
     elif schema == "measured_v2":
         data = BFMDataset(cfg["dataset_manifest"], split="train")
     else:

@@ -18,9 +18,11 @@ SOURCES = ("state", "joints", *CAMERAS)
 
 def validate(root, *, check_image_pixels=True):
     m = dict(root.attrs)
-    if (m.get("schema_name"), m.get("schema_version")) != (SCHEMA, VERSION):
+    if m.get("schema_name") != SCHEMA or m.get("schema_version") not in (VERSION, "4.0.0"):
         raise ValueError("Requires Sharpa schema 3.0.0; legacy data cannot be reinterpreted")
-    expected = SharpaContract().to_dict()
+    from bfm.contracts.sharpa import contract_for, execution_configuration
+    version=m.get('schema_version');v4=version=='4.0.0'
+    expected = contract_for(version).to_dict()
     if m.get("contract") != expected or m.get("state_order") != list(FIELDS):
         raise ValueError("State/action contract mismatch")
     if m.get("profile") != PROFILE or m.get("sync_clock") != "mcap_log_time_ns":
@@ -34,7 +36,7 @@ def validate(root, *, check_image_pixels=True):
         raise ValueError("Measured joint names must be unique and include both arms")
     if not m.get("source_episode_id") or not m.get("source_metadata") or len(m.get("collection_commit", "")) != 40:
         raise ValueError("Missing source provenance")
-    if m['source_metadata'].get('bfm', {}).get('contract_version') != 3:
+    if m['source_metadata'].get('bfm', {}).get('contract_version') != (4 if v4 else 3):
         raise ValueError('Collection v3 source metadata required; collection-v2 data cannot be relabelled')
     t = len(root["action"])
     shapes = {"action": (t, 26), "action_header_ns": (t,), "timestamp": (t,), "next_timestamp": (t,), "record_ns": (t,), "next_record_ns": (t,),
@@ -42,6 +44,13 @@ def validate(root, *, check_image_pixels=True):
     simulation = m['source_metadata']['bfm'].get('policy_clock', {}).get('domain') == 'isaac_simulation'
     if simulation:
         shapes['next_action_header_ns'] = (t,)
+    if v4:
+        execution_configuration(m['execution'])
+        if not m.get('execution_checks') or any(c.get('arm_updates_checked',0)<1 or c.get('controller_config_sha256')!=m['execution']['controller_config_sha256'] for c in m['execution_checks']):raise ValueError('Missing verified executor provenance')
+        if m['execution'] != m['source_metadata']['bfm']['execution']:raise ValueError('Executor identity mismatch')
+        for prefix in ('','next_'):
+            for key in ('acceptance_ns','acceptance_record_ns','action_id','producer_session_index'):shapes[prefix+key]=(t,)
+        shapes['duration']=(t,)
     for p in ("obs", "next_obs"):
         shapes.update({f"{p}/state": (t, 56), f"{p}/joint_position": (t, len(names)), f"{p}/joint_velocity": (t, len(names)),
                        f"{p}/source_record_ns": (t, 5), f"{p}/source_header_ns": (t, 5), f"{p}/sync_age_ns": (t, 5)})
@@ -59,6 +68,8 @@ def validate(root, *, check_image_pixels=True):
         if a.shape != shape or a.dtype.kind not in "fiub" or not np.isfinite(a).all():
             raise ValueError(f"Invalid finite array {k}, expected {shape}")
         dtype = np.bool_ if k in ("terminated", "truncated") else np.int64 if k.endswith(("_ns", "segment_id")) else np.float64
+        if v4 and k.endswith("action_id"):dtype=np.uint64
+        if v4 and k.endswith("producer_session_index"):dtype=np.int64
         if a.dtype != dtype:
             raise ValueError(f"Wrong dtype for {k}: expected {dtype}")
     ActionNormalizer().normalize(root["action"][:])
@@ -82,13 +93,26 @@ def validate(root, *, check_image_pixels=True):
         raise ValueError('Duplicate/backward action record timestamps')
     if simulation:
         timing = m.get('policy_timing', {})
-        period = m['source_metadata']['bfm']['policy_clock']['period_ns']
+        period = 1e9/15 if v4 else m['source_metadata']['bfm']['policy_clock']['period_ns']
         if (timing.get('domain') != 'action_header_simulation_ns' or timing.get('period_ns') != period
                 or type(timing.get('tolerance_ns')) is not int or not 0 <= timing['tolerance_ns'] < period / 2):
             raise ValueError('Invalid stored simulation policy timing')
         p, np_ = root['action_header_ns'][:], root['next_action_header_ns'][:]
         if any(continuity_reason(a, b, timing) for a, b in zip(p, np_)):
             raise ValueError('Invalid simulation policy adjacency')
+        if v4:
+            from .policy_time import policy_timing
+            if timing!=policy_timing(m['source_metadata']['bfm']):raise ValueError('v4 timing metadata mismatch')
+            for prefix in ('','next_'):
+                ids=root[prefix+'action_id'][:];session=root[prefix+'producer_session_index'][:]
+                if (ids==0).any() or (session<0).any() or (session>=len(m['producer_sessions'])).any():raise ValueError('Invalid accepted action identity')
+                if (root[prefix+'acceptance_ns'][:]<root[prefix+'action_header_ns'][:]).any():raise ValueError('Acceptance precedes generation')
+                obs='obs' if not prefix else 'next_obs'
+                if (root[f'{obs}/source_record_ns'][:]>root[prefix+'acceptance_record_ns'][:][:,None]).any():raise ValueError('Future acceptance observation')
+            if (root['producer_session_index'][:]!=root['next_producer_session_index'][:]).any() or (root['next_action_id'][:]<=root['action_id'][:]).any():raise ValueError('Invalid v4 transition identity')
+            p,np_=root['acceptance_ns'][:],root['next_acceptance_ns'][:]
+            if any(continuity_reason(a,b,timing) for a,b in zip(p,np_)):raise ValueError('Invalid acceptance adjacency')
+            if not np.allclose(root['duration'][:],(np_-p)/1e9,atol=1e-12,rtol=0):raise ValueError('Invalid v4 duration')
         origin = m['policy_origin_ns']
     else:
         p, np_, origin = r, nr, m['record_origin_ns']
@@ -108,6 +132,9 @@ def validate(root, *, check_image_pixels=True):
         raise ValueError('Simulation policy timestamps are discontinuous')
     if (nr[:-1][~continuous] >= r[1:][~continuous]).any():
         raise ValueError("Segments overlap")
+    if v4:
+        for key in ('action_id','producer_session_index','acceptance_ns','acceptance_record_ns'):
+            if not np.array_equal(root['next_'+key][:-1][continuous],root[key][1:][continuous]):raise ValueError('v4 execution identity continuity failed')
     keys = ["state", "joint_position", "joint_velocity", "source_record_ns", "source_header_ns", "sync_age_ns"]
     if m.get("has_effort"):
         keys.append("joint_effort")
@@ -152,15 +179,18 @@ class SharpaDataset:
         self.image_rows, self.roots, self.episode_fingerprints = [], [], []
         path = Path(manifest)
         self.manifest = json.loads(path.read_text())
-        if self.manifest.get("schema_version") != VERSION or not self.manifest.get("dataset_id"):
+        if self.manifest.get("schema_version") not in (VERSION,"4.0.0") or not self.manifest.get("dataset_id"):
             raise ValueError("Requires explicit Sharpa v3 manifest")
-        self.contract, self.ids, self.episodes = SharpaContract(), [], []
-        self.schema_version, self.state_fields = VERSION, list(FIELDS)
+        from bfm.contracts.sharpa import contract_for
+        version=self.manifest['schema_version']
+        self.contract, self.ids, self.episodes = contract_for(version), [], []
+        self.schema_version, self.state_fields = version, list(FIELDS)
         digest = hashlib.sha256(json.dumps(self.manifest, sort_keys=True).encode())
         seen_ids, seen_paths = set(), set()
         for entry in self.manifest["episodes"]:
             p = (path.parent / entry["path"]).resolve()
             root = zarr.open_group(str(p), mode="r")
+            if root.attrs['schema_version']!=version:raise ValueError('Mixed/relabeled Sharpa schemas')
             identity = root.attrs["source_episode_id"]
             if identity in seen_ids or p in seen_paths or entry["split"] not in ("train", "validation", "test"):
                 raise ValueError("Duplicate source episode/path or invalid split; never split a recording's frames")
@@ -187,6 +217,7 @@ class SharpaDataset:
                     update(key.encode())
                     update(root.store[key])
             keys = ("obs/state", "next_obs/state", "action", "terminated", "truncated", "timestamp", "next_timestamp", "segment_id")
+            if version=='4.0.0':keys += tuple(k for k in root.array_keys() if k not in keys)
             data = {k: root[k][:] for k in keys}
             if observation_profile == VISION:
                 for p in ('obs', 'next_obs'):

@@ -142,6 +142,10 @@ def read_records(episode):
     if info["storage_identifier"] != "mcap":
         raise ValueError("Expected rosbag2 with MCAP storage")
     result = defaultdict(list)
+    topics=[ACTION, *TOPICS, *HELD, RAW_ARM, EPISODE, RECORDING, CLOCK]
+    if meta.get('bfm',{}).get('contract_version')==4:
+        from .execution_v4 import EXTRA
+        topics.extend(EXTRA)
     hashes = {}
     for name in info["relative_file_paths"]:
         path = (bag/name).resolve()
@@ -154,12 +158,15 @@ def read_records(episode):
         hashes[name] = digest.hexdigest()
         with path.open('rb') as stream:
             reader = make_reader(stream, decoder_factories=[DecoderFactory()])
-            for schema, channel, message, decoded in reader.iter_decoded_messages(topics=[ACTION, *TOPICS, *HELD, RAW_ARM, EPISODE, RECORDING, CLOCK]):
+            for schema, channel, message, decoded in reader.iter_decoded_messages(topics=topics):
                 result[channel.topic].append((message.log_time, decoded))
     return result, meta, bag_meta, hashes
 
 
 def build(records, metadata, *, max_age_s, collection_commit, max_camera_skew_s=None):
+    if metadata.get('bfm', {}).get('contract_version') == 4:
+        from .mcap_v4 import build as build_v4
+        return build_v4(records, metadata, max_age_s=max_age_s, collection_commit=collection_commit, max_camera_skew_s=max_camera_skew_s)
     if len(collection_commit) != 40 or any(c not in '0123456789abcdef' for c in collection_commit):
         raise ValueError("Full collection commit SHA required")
     model_hash = metadata.get("camera_configuration", {}).get("model_sha256")
@@ -446,5 +453,5 @@ def convert(episode, output, *, max_age_s, collection_commit, max_camera_skew_s=
     arrays, attrs = build(records, metadata, max_age_s=max_age_s, collection_commit=collection_commit,
                           max_camera_skew_s=max_camera_skew_s)
     attrs.update(source_bag_metadata=bag_metadata, source_mcap_sha256=hashes)
-    print(json.dumps({"sync_before_filter": attrs["sync_statistics_before_filter"], "rejected_ticks": attrs["rejected_ticks"]}))
+    print(json.dumps({"sync_before_filter": attrs.get("sync_statistics_before_filter", {}), "rejected_ticks": attrs["rejected_ticks"]}))
     return write(output, arrays, attrs)

@@ -4,6 +4,14 @@ import numpy as np
 
 def policy_timing(bfm, clock_samples=()):
     clock = bfm.get('policy_clock')
+    if bfm.get('contract_version') == 4:
+        if (not clock or clock.get('domain') != 'isaac_simulation' or clock.get('topic') != '/clock'
+                or clock.get('period_ns_numerator') != 1_000_000_000 or clock.get('period_ns_denominator') != 15
+                or bfm.get('policy_hz') != 15 or not np.isclose(bfm.get('policy_dt', 0), 1/15)):
+            raise ValueError('Invalid v4 rational policy clock')
+        return dict(domain='action_header_simulation_ns', period_ns=1_000_000_000/15,
+                    period_ns_numerator=1_000_000_000, period_ns_denominator=15,
+                    tolerance_ns=3_333_335, tolerance_source='300Hz_physics_step_plus_rounding')
     if clock is None:
         # Older collection-v3 used a wall timer and source-native action headers.
         return {'domain': 'mcap_log_time_ns', 'period_ns': 100_000_000,
@@ -43,3 +51,25 @@ def continuity_reason(previous, current, timing):
     if delta < timing['period_ns'] - timing['tolerance_ns']:
         return 'policy_burst'
     return None
+
+
+class SimPolicyClock:
+    """Synthetic v4 rational deadlines, 1ns tolerance, one update without catch-up."""
+    def __init__(self, hz=15):
+        if type(hz) is not int or hz <= 0: raise ValueError('Positive integer Hz required')
+        self.hz = hz
+        self.last_ns = self.origin = None
+        self.index = 1
+
+    def advance(self, now_ns):
+        if type(now_ns) is not int or now_ns < 0: raise ValueError('Invalid simulation ns')
+        if self.last_ns is None or now_ns < self.last_ns:
+            self.last_ns = self.origin = now_ns
+            self.index = 1
+            return False
+        if now_ns == self.last_ns: return False
+        self.last_ns = now_ns
+        reached = (now_ns-self.origin+1)*self.hz//1_000_000_000
+        if reached < self.index: return False
+        self.index = reached+1
+        return True
