@@ -198,3 +198,7 @@ data/zarr_15hz/*
 # Passive decoupled collection derived stores.
 data/zarr_decoupled_v4/*
 !data/zarr_decoupled_v4/.gitkeep
+
+/data/zarr_batch4_test/
+/data/zarr_decoupled_v4/
+/data/feature_cache_decoupled_v4/

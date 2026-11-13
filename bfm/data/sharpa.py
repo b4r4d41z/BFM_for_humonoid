@@ -59,6 +59,8 @@ def validate(root, *, check_image_pixels=True):
                 or m.get('sampled_control_approximation') is not True or m['source_metadata'].get('robot')!='kuavo_s40_sharpa'):
             raise ValueError('Decoupled schema/control metadata mismatch')
         history=validate_history(root)
+        from .source_provenance import validate_provenance
+        validate_provenance(root)
         shapes.update(duration=(t,),intervening_arm_max_delta=(t,14),intervening_hand_max_delta=(t,12),boundary_controller_arm_delta=(t,14),boundary_controller_hand_delta=(t,12))
         for pre in ('','next_'):
             shapes.update({pre+'action_id':(t,),pre+'producer_session_index':(t,),pre+'command_source_record_ns':(t,4)})

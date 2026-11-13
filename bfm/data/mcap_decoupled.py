@@ -3,7 +3,8 @@ import numpy as np
 from bfm.contracts.sharpa import (SCHEMA,PROFILE,FIELDS,GROUPS,MODEL_SHA256,SharpaDecoupledContract,
                                   DECOUPLED_SCHEMA,decoupled_control,flatten_action,flatten_state)
 from .mcap import ACTION,TOPICS,CLOCK,EPISODE,RECORDING,lifecycle,asof,header_ns,decode_image
-from .decoupled import verify_commands,causal_target,history_arrays,HISTORY,arm_values,hand_values,ARMS,HANDS
+from .decoupled import verify_commands,history_arrays,HISTORY,arm_values,hand_values,ARMS,HANDS
+from .source_provenance import Provenance
 from .policy_time import policy_timing,continuity_reason
 from .sharpa import CAMERAS,SOURCES
 from .execution_v4 import identity
@@ -19,6 +20,7 @@ def build(records,metadata,*,max_age_s,collection_commit,max_camera_skew_s=None)
         raise ValueError('Decoupled robot/model/collection/clock provenance mismatch')
     for samples in records.values():samples.sort(key=lambda x:x[0])
     command_warnings=verify_commands(records)
+    verifier=Provenance(records,metadata);associations=[]
     actions=records[ACTION];timing=policy_timing(bfm,records[CLOCK])
     limits=np.asarray(max_age_s,dtype=float)
     if limits.shape!=(5,) or not np.isfinite(limits).all() or (limits<=0).any():raise ValueError('Five positive freshness limits required')
@@ -33,14 +35,7 @@ def build(records,metadata,*,max_age_s,collection_commit,max_camera_skew_s=None)
             if delta<0:resets.append(record)
             elif delta>step+2:clock_gaps.append(record)
         previous=stamp
-    import json
-    cutoffs=list(resets);last_boundary=None
-    for record,msg in records.get(EPISODE,[]):
-        event=json.loads(msg.data)
-        if 'phase' not in event:continue  # Recording events do not reset the passive sampler cache.
-        boundary=event.get('boundary_id')
-        if boundary!=last_boundary or event['phase'] in ('stopped','failed','closed'):cutoffs.append(record)
-        last_boundary=boundary
+    cutoffs=verifier.cutoffs
     sessions=[];watermarks={};ticks=[];rejects=[];boundaries=[];names=None;effort=None;encodings={}
     lower_bound=-1
     for i,(record,msg) in enumerate(actions):
@@ -56,7 +51,7 @@ def build(records,metadata,*,max_age_s,collection_commit,max_camera_skew_s=None)
         boundaries.append(boundary)
         if i and not boundary and stamp<=header_ns(actions[i-1][1]):raise ValueError('Duplicate/backward decision stamp without reset')
         if i and not boundary and key[0]!=actions[i-1][1].producer_session_id:raise ValueError('Competing passive sampler session')
-        provenance=causal_target(records,record,a,lower_bound)
+        provenance,association=verifier.match(i,record,msg);associations.append(association)
         picked=[asof(records.get(topic,[]),record) for topic in TOPICS];reasons=[]
         if provenance is None:reasons.append('incomplete_boundary_command_provenance')
         if events[i][1]:reasons.append(events[i][1])
@@ -125,6 +120,8 @@ def build(records,metadata,*,max_age_s,collection_commit,max_camera_skew_s=None)
                camera_skew_ns_p50_p95_max=np.percentile([np.ptp(t[0]['source_record_ns'][2:]) for t in ticks if t is not None],[50,95,100]).tolist(),
                source_age_ns_p50_p95_max=np.percentile(np.stack([t[0]['sync_age_ns'] for t in ticks if t is not None]),[50,95,100],axis=0).tolist(),
                sampled_control_approximation=True,command_source_columns=['mapped_arm','arm','raw_hand','hand'],
+               command_source_role='recorder_causal_boundary_context_not_gateway_input_identity',
+               action_provenance=associations,
                provenance_limitations=['raw bridge to mapped arm unit/side overrides are not recorded; mapped radian source is authoritative',
                                        'no ACK or measured controller application time; snapshots do not describe all intervening inputs'],
                joint_names=names,joint_units=dict(position='rad',velocity='rad/s',effort='N*m'),has_effort=effort,

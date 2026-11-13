@@ -45,15 +45,74 @@ commands are preserved, but their environment-controlled unit/side transforms
 cannot be certified from unrecorded overrides; the mapped radian stream is the
 contract's authoritative policy source.
 
-At each action boundary, the latest causal mapped arm/raw hand inputs validate
-the exact 26D snapshot. The latest causal controller targets are separate context;
-independent callbacks can make them differ. Signed boundary_controller_*_delta
-arrays retain that difference. No future command is selected for an action.
+Action provenance now follows Synthetic main `d13fedf34969d03151df8ddf81800b0421124067`
+(`docs/source_provenance_v1.md`, `source_provenance.py`, and the appended
+`BfmAction.msg` fields). A v1 operator Action joins the self-contained
+`/bfm/source/input_provenance` String trace by producer session and action ID.
+The SHA-256 covers exact recorded UTF-8 String.data bytes. Source arm/hand
+callback sequences, native headers, names, pre-clamp values, recorded bounds and
+the decision simulation stamp are verified. Canonical targets must match exactly
+as binary64, including signed zero. Trace receipt may precede or follow Action
+receipt. Repeated identical traces are idempotent; conflicting identities,
+missing evidence, malformed claims and corrupt hashes fail closed. A declared
+protocol or new Action fields can never fall back to historical matching.
+Policy/default version-zero Actions are not operator demonstrations.
+
+Historical bags use a separate `historical_bounded_value_chain_v1` profile.
+The existing 50 ms recorder transport budget bounds reordering, independently
+of simulation cadence. Candidates comprise the latest source held at the start
+of that window and all updates through the window end (capped before the next
+Action or cache-clear boundary). This allows an unchanged input to have been
+held longer than 50 ms; it does not revive values superseded before the window.
+Each candidate requires a same-native-header (including frame), same-epoch
+controller copy within 50 ms and clamp/value equality. Historical arm tolerance
+remains 1e-7 rad, hands exact; no encoder-count tolerance was added. Distinct
+pre-clamp values collapsing onto the same target are ambiguous and rejected.
+Repeated equivalent chains retain every candidate and claim only value
+equivalence, never a unique Gateway callback. Missing leading/boundary evidence
+rejects ticks visibly; interior mismatches fail conversion. STOP/PLAY cache
+clears and clock rollback prevent identity reuse across boundaries.
+
+Schema 4.1.0 is unchanged. Optional trace history plus `action_provenance`
+metadata preserve associations for **all** ticks, including observation rejects.
+Validation replays association against the hashed, decoded full history.
+MCAP dynamic-message slots are serialized (not their empty instance dictionaries).
+Existing stores without the extension remain readable. New evidence participates
+in dataset/cache fingerprints. `command_source_record_ns` remains the four
+recorder-causal boundary-context timestamps; `command_source_role` explicitly
+distinguishes those from matched source identities. Signed boundary_controller_*_delta
+arrays still retain controller differences. Input headers do not measure
+Gateway callback time or physical application, and hashes do not authenticate
+publishers. These limitations also apply to explicit v1 evidence.
+
 Sensor selection is latest MCAP log time <= action record time, with explicit
 freshness/skew limits and no pre-boundary observations. Native headers remain
 separate provenance; no subtraction across clock domains. Repeated latest targets
 are legitimate: source age is recorded, not replaced by a fabricated watchdog.
-A sampler/recorder race without a provable causal chain fails closed.
+A sampler/recorder race without verifiable source evidence fails closed.
+
+### Safe reconversion
+
+Converter implementation bytes (including `source_provenance.py`) invalidate
+old conversion keys intentionally. Never delete existing stores or caches to
+force reuse. Test in a new destination with the existing orchestration API:
+
+```python
+from pathlib import Path
+import yaml
+from bfm.data.recordings import prepare
+policy = yaml.safe_load(Path('configs/data_conversion/sharpa_v3.yaml').read_text())
+prepare('/path/to/recordings', '/tmp/bfm-provenance-new', policy,
+        expected_version=4, expected_architecture='decoupled_teleoperation_v1')
+```
+
+The usual `python tools/convert_recordings.py /path/to/recordings --contract decoupled-v4`
+remains available. It refuses incompatible existing outputs instead of overwriting
+them. To use that fixed destination, explicitly move the old directory aside
+first, preserving its manifest and caches, then convert into a fresh directory.
+Build a **new** feature cache for reconverted stores; do not reuse the old cache
+identity. No raw recording or checkpoint needs rewriting, and no model behavior,
+training configuration or preprocessing changed.
 
 Policy headers must be witnessed by /clock. Metadata physics Hz determines the
 quantization tolerance; actual clock gaps/reset evidence splits transitions.

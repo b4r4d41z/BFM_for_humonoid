@@ -48,7 +48,7 @@ def source_identity(episode, policy):
         raise ValueError('No MCAP files declared')
     # Reuse requires identical source bytes, policy and converter implementation.
     digest = hashlib.sha256(json.dumps([metadata, bag_metadata, hashes, policy], sort_keys=True).encode())
-    for module in ('mcap.py', 'mcap_v4.py', 'execution_v4.py', 'decoupled.py', 'mcap_decoupled.py', 'sharpa.py', 'policy_time.py'):
+    for module in ('mcap.py', 'mcap_v4.py', 'execution_v4.py', 'decoupled.py', 'source_provenance.py', 'mcap_decoupled.py', 'sharpa.py', 'policy_time.py'):
         digest.update(Path(__file__).with_name(module).read_bytes())
     from bfm.contracts import sharpa
     digest.update(Path(sharpa.__file__).read_bytes())
