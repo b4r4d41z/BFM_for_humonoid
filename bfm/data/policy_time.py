@@ -4,6 +4,18 @@ import numpy as np
 
 def policy_timing(bfm, clock_samples=()):
     clock = bfm.get('policy_clock')
+    if bfm.get('control_architecture') == 'decoupled_teleoperation_v1':
+        control = bfm.get('control',{});hz = control.get('physics_hz')
+        if (type(hz) not in (int,float) or not np.isfinite(hz) or hz<=0 or not clock
+                or clock.get('domain')!='isaac_simulation' or clock.get('topic')!='/clock'
+                or clock.get('period_ns_numerator')!=10**9 or clock.get('period_ns_denominator')!=15
+                or bfm.get('policy_hz')!=15 or not np.isclose(bfm.get('policy_dt',0),1/15)):
+            raise ValueError('Invalid decoupled simulation policy clock')
+        step = int(np.ceil(1e9/hz))
+        for _,msg in clock_samples:
+            if msg.clock.sec<0 or not 0<=msg.clock.nanosec<10**9:raise ValueError('Invalid /clock sample')
+        return dict(domain='action_header_simulation_ns',period_ns=1e9/15,tolerance_ns=min(step+2,int(1e9/30)-1),
+                    tolerance_source='recorded_physics_hz_plus_ns_rounding',physics_hz=hz)
     if bfm.get('contract_version') == 4:
         if (not clock or clock.get('domain') != 'isaac_simulation' or clock.get('topic') != '/clock'
                 or clock.get('period_ns_numerator') != 1_000_000_000 or clock.get('period_ns_denominator') != 15
@@ -47,6 +59,7 @@ def continuity_reason(previous, current, timing):
     if delta < 0:
         return 'backward_policy_stamp'
     if delta > timing['period_ns'] + timing['tolerance_ns']:
+        if timing.get('physics_hz',float('inf'))<=30:return 'unverifiable_coarse_clock_interval'
         return 'skipped_policy_interval'
     if delta < timing['period_ns'] - timing['tolerance_ns']:
         return 'policy_burst'

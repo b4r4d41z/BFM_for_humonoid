@@ -11,7 +11,7 @@ def main():
     import yaml
     from bfm.fb.runtime import VisualRuntime, validate_ros_config
     from bfm.sharpa_runtime import VisualObservationBuffer, fill_messages
-    from bfm.fb.execution import ExecutionMonitor, fill_action, output_types
+    from bfm.fb.execution import ExecutionMonitor, PolicyIdentity, fill_action, output_types
     from bfm.data.policy_time import SimPolicyClock
     from bfm.data.mcap import decode_image
     from bfm.fb.evaluation import Evaluation, RolloutLogger, validate_evaluation
@@ -31,7 +31,8 @@ def main():
     if a.profile_inference is not None: cfg['profile_inference'] = a.profile_inference
     validate_ros_config(cfg)
     v4=cfg.get('control_contract_version',3)==4
-    if v4 and (a.max_arm_delta_rad is not None or a.disable_arm_delta_limit):p.error('v4 delegates trajectory limits to the executor')
+    decoupled=cfg.get('control_architecture')=='decoupled_teleoperation_v1'
+    if v4 and (a.max_arm_delta_rad is not None or a.disable_arm_delta_limit):p.error('Selected v4 contract forwards targets without a BFM trajectory limiter')
     mode = a.mode or cfg.get('mode', 'shadow')
     warmup = a.warmup_ticks if a.warmup_ticks is not None else cfg.get('warmup_ticks', 10)
     maximum = a.max_policy_steps if a.max_policy_steps is not None else cfg.get('max_policy_steps', 300)
@@ -51,7 +52,7 @@ def main():
         from sensor_msgs.msg import Image, JointState
         from dynamic_biped.msg import BfmAction, RobotHandPosition
         if v4:
-            from dynamic_biped.msg import BfmExecutionStatus
+            if not decoupled:from dynamic_biped.msg import BfmExecutionStatus
             from rosgraph_msgs.msg import Clock
             from rclpy.clock import Clock as ROSClock
             from rclpy.clock_type import ClockType
@@ -61,13 +62,15 @@ def main():
         raise RuntimeError('Source ROS2 and dynamic_biped message packages before running this endpoint') from exc
     logger = RolloutLogger(Path(cfg['logging']['output_root'])/uuid.uuid4().hex,
                            mode=mode, checkpoint=checkpoint, task_z=task)
-    logger.summary.update(arm_delta_limit_enabled=delta is not None,
+    logger.summary.update(control_architecture=cfg.get('control_architecture','legacy'),
+                          execution_acknowledgements=v4 and not decoupled,arm_delta_limit_enabled=delta is not None,
                           max_arm_delta_rad=delta)
     print(f'Rollout logs: {logger.directory}', flush=True)
     try:
         runtime=VisualRuntime(checkpoint,a.device, precision=cfg.get('inference_precision', 'fp32'),
                               profile=cfg.get('profile_inference', False))
-        if v4:runtime.require_v4()
+        if decoupled:runtime.require_decoupled(cfg['physics_hz'])
+        elif v4:runtime.require_v4()
         runtime.load_task(task, require_bound=True)
     except Exception as exc:
         logger.close(f'initialization failed: {exc}')
@@ -80,18 +83,22 @@ def main():
             self.publishers_={k:self.create_publisher(t,cfg['output_topics'][k],1)
                               for k,t in output_types(4 if v4 else 3,BfmAction,JointState,RobotHandPosition).items()} if mode == 'closed-loop' else {}
             self.evaluation = Evaluation(runtime, self.buffer, logger, mode=mode, warmup_ticks=warmup,
-                                         max_policy_steps=maximum, max_arm_delta_rad=delta, control_contract_version=4 if v4 else 3)
+                                         max_policy_steps=maximum, max_arm_delta_rad=delta, control_contract_version=4 if v4 else 3, control_architecture=cfg.get('control_architecture'))
             qos=QoSProfile(depth=1,reliability=ReliabilityPolicy.BEST_EFFORT)
             self.create_subscription(JointState,cfg['joint_topic'],lambda m:self.receive('joints',m),qos)
             for c in cfg['cameras']:
                 self.create_subscription(Image,cfg['camera_topics'][c],lambda m,c=c:self.receive(c,m),qos)
             if v4:
                 self.scheduler=SimPolicyClock(15)
-                self.monitor=ExecutionMonitor(runtime.payload['execution'],cfg['ack_timeout_wall_s'])
-                self.execution_events=(logger.directory/'execution.jsonl').open('w')
-                self.create_subscription(BfmExecutionStatus,cfg['execution_status_topic'],self.acknowledgement,100)
+                if decoupled:
+                    self.identity=PolicyIdentity()
+                    logger.summary['producer_session_id']=self.identity.session
+                else:
+                    self.monitor=ExecutionMonitor(runtime.payload['execution'],cfg['ack_timeout_wall_s'])
+                    self.execution_events=(logger.directory/'execution.jsonl').open('w')
+                    self.create_subscription(BfmExecutionStatus,cfg['execution_status_topic'],self.acknowledgement,100)
                 self.create_subscription(Clock,'/clock',self.simulation_clock,QoSProfile(depth=1000,reliability=ReliabilityPolicy.BEST_EFFORT))
-                self.create_timer(.05,self.watchdog,clock=ROSClock(clock_type=ClockType.STEADY_TIME))
+                if not decoupled:self.create_timer(.05,self.watchdog,clock=ROSClock(clock_type=ClockType.STEADY_TIME))
             else:self.create_timer(1/cfg['policy_hz'],self.tick)
 
         def flush_execution(self):
@@ -116,7 +123,8 @@ def main():
                 self.evaluation.stop('simulation_reset');return
             self.sim_ns=ns
             if self.scheduler.advance(ns):
-                self.watchdog();self.tick()
+                if not decoupled:self.watchdog()
+                self.tick()
 
         def receive(self, source, message):
             try:
@@ -133,6 +141,11 @@ def main():
                     raise RuntimeError(f'Competing publisher on {topic}; relinquish gateway/teleop control')
 
         def publish_action(self, physical):
+            if decoupled:
+                message=self.identity.publish(fill_action(physical,BfmAction()),self.sim_ns)
+                self.publishers_['action'].publish(message)
+                return dict(producer_session_id=message.producer_session_id,action_id=message.action_id,
+                            execution_status='published_only_no_ack_or_attainment')
             if v4:
                 message=self.monitor.publish(fill_action(physical,BfmAction()),self.sim_ns)
                 self.publishers_['action'].publish(message)
@@ -149,7 +162,7 @@ def main():
     node = None
     try:
         node=Runtime()
-        while rclpy.ok() and (not node.evaluation.stopped or (v4 and bool(node.monitor.pending))):
+        while rclpy.ok() and (not node.evaluation.stopped or (v4 and not decoupled and bool(node.monitor.pending))):
             rclpy.spin_once(node)
     except KeyboardInterrupt:
         logger.close('keyboard_interrupt')
@@ -159,7 +172,7 @@ def main():
     finally:
         logger.close('shutdown')
         if node is not None:
-            if v4:
+            if v4 and not decoupled:
                 import json
                 node.flush_execution();node.execution_events.close()
                 logger.summary.update(producer_session_id=node.monitor.session,accepted_actions=len(node.monitor.completed),unacknowledged_actions=list(node.monitor.pending))

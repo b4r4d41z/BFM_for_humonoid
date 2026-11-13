@@ -93,10 +93,12 @@ class RolloutLogger:
 
 class Evaluation:
     def __init__(self, runtime, buffer, logger, *, mode='shadow', warmup_ticks=10,
-                 max_policy_steps=300, max_arm_delta_rad=.1, clock=time.monotonic, control_contract_version=3):
+                 max_policy_steps=300, max_arm_delta_rad=.1, clock=time.monotonic, control_contract_version=3, control_architecture=None):
         if control_contract_version not in (3,4):raise ValueError('Unknown evaluation contract')
+        if control_architecture not in (None,'executor_v1','decoupled_teleoperation_v1') or (control_architecture=='decoupled_teleoperation_v1' and control_contract_version!=4):raise ValueError('Incompatible evaluation architecture/version')
         if control_contract_version==4:
-            runtime.require_v4()
+            if control_architecture=='decoupled_teleoperation_v1':runtime.require_decoupled()
+            else:runtime.require_v4()
             max_arm_delta_rad=None
         validate_evaluation(mode, warmup_ticks, max_policy_steps, max_arm_delta_rad)
         self.runtime, self.buffer, self.logger = runtime, buffer, logger

@@ -34,6 +34,7 @@ def train(config, *, resume=None):
         "vision",
         "outcome",
         "feature_cache",
+        "allow_sampled_control_approximation",
     }
     if set(config) - allowed:
         raise ValueError(f"Unknown training keys: {set(config)-allowed}")
@@ -83,11 +84,11 @@ def train(config, *, resume=None):
     visual = profile == "vision_proprio_v1"
 
     if profile not in ("task56", "vision_proprio_v1") or (
-        visual and schema not in ("sharpa_v3","sharpa_v4")
+        visual and schema not in ("sharpa_v3","sharpa_v4","sharpa_decoupled_v4")
     ):
         raise ValueError("Observation profile incompatible with dataset schema")
 
-    if schema in ("sharpa_v3","sharpa_v4"):
+    if schema in ("sharpa_v3","sharpa_v4","sharpa_decoupled_v4"):
         from bfm.data.sharpa import SharpaDataset
 
         data = SharpaDataset(
@@ -96,7 +97,7 @@ def train(config, *, resume=None):
             observation_profile=profile,
             outcome=cfg.get("outcome", "all"),
         )
-        if data.schema_version != ('4.0.0' if schema=='sharpa_v4' else '3.0.0'):raise ValueError('Training dataset schema mismatch')
+        if data.schema_version != ({'sharpa_v3':'3.0.0','sharpa_v4':'4.0.0','sharpa_decoupled_v4':'4.1.0'}[schema]):raise ValueError('Training dataset schema mismatch')
     elif schema == "measured_v2":
         data = BFMDataset(cfg["dataset_manifest"], split="train")
     else:
@@ -104,6 +105,8 @@ def train(config, *, resume=None):
             "dataset_schema must be sharpa_v3 or legacy measured_v2"
         )
 
+    if schema=='sharpa_decoupled_v4' and cfg.get('allow_sampled_control_approximation') is not True:
+        raise ValueError('Decoupled snapshots require explicit allow_sampled_control_approximation=true; history is not an exact held action')
     if visual:
         from bfm.data.visual_replay import VisualReplayBuffer
         from .observation import VisionConfig

@@ -147,7 +147,7 @@ def test_runtime_gate_shadow_and_config(trained,tmp_path):
     restored=VisualRuntime(path);restored.require_v4()
     p['execution']['controller_config_sha256']='x'*64;torch.save(p,tmp_path/'bad.pt')
     with pytest.raises(ValueError):load_payload(tmp_path/'bad.pt')
-    cfg=yaml.safe_load((Path(__file__).parents[2]/'configs/runtime/isaac_ros2.yaml').read_text());validate_ros_config(cfg)
+    cfg=yaml.safe_load((Path(__file__).parents[2]/'configs/runtime/isaac_executor_v4.yaml').read_text());validate_ros_config(cfg)
     assert cfg['output_topics']=={'action':'/bfm/action'} and cfg['policy_hz']==15
     assert output_types(4,'canonical','arm','hand')=={'action':'canonical'}
     assert set(output_types(3,'canonical','arm','hand'))=={'action','arm','hand'}

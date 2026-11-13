@@ -194,3 +194,7 @@ bfm-venv/
 # Unified executor v4 derived episodes; legacy data/zarr remains separate.
 data/zarr_15hz/*
 !data/zarr_15hz/.gitkeep
+
+# Passive decoupled collection derived stores.
+data/zarr_decoupled_v4/*
+!data/zarr_decoupled_v4/.gitkeep

@@ -59,3 +59,18 @@ def output_types(version, action, arm, hand):
     if version == 4:return {'action':action}
     if version == 3:return {'arm':arm,'hand':hand,'action':action}
     raise ValueError('Unsupported publication contract')
+
+
+class PolicyIdentity:
+    """Direct bridge publication identity; deliberately no pending/ACK state."""
+    def __init__(self):
+        self.session=uuid.uuid4().hex;self.counter=0;self.last_ns=None
+
+    def publish(self,message,simulation_ns):
+        if type(simulation_ns) is not int or simulation_ns<0 or (self.last_ns is not None and simulation_ns<=self.last_ns):
+            raise ValueError('Duplicate/backward policy simulation time')
+        self.last_ns=simulation_ns;self.counter+=1
+        if self.counter>=2**64:raise ValueError('Policy action identity exhausted')
+        message.producer_session_id=self.session;message.action_id=self.counter
+        message.header.stamp.sec,message.header.stamp.nanosec=divmod(simulation_ns,10**9)
+        return message

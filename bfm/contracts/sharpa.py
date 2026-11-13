@@ -124,6 +124,7 @@ class SharpaV4Contract(SharpaContract):
 def contract_for(version):
     if version == '3.0.0': return SharpaContract()
     if version == '4.0.0': return SharpaV4Contract()
+    if version == '4.1.0': return SharpaDecoupledContract()
     raise ValueError('Unsupported Sharpa schema; no implicit migration')
 
 
@@ -140,3 +141,44 @@ def execution_configuration(execution):
             or execution.get('status_topic') != '/bfm/execution_status'):
         raise ValueError('Unknown v4 executor configuration/hash/interface')
     return expected
+
+
+DECOUPLED = 'decoupled_teleoperation_v1'
+DECOUPLED_SCHEMA = '4.1.0'
+
+
+@dataclass
+class SharpaDecoupledContract(SharpaV4Contract):
+    """Sampled operator targets, not a zero-order-held executed action."""
+    def to_dict(self):
+        value = SharpaContract.to_dict(self)
+        value.update(version=4, control_architecture=DECOUPLED, execution_acknowledgements=False,
+                     arm_semantics='sampled_bounded_operator_target_with_full_rate_history',
+                     transition_semantics='sampled_control_approximation_not_exact_held_action',
+                     policy_period_ns={'numerator':10**9,'denominator':15})
+        return value
+
+
+def decoupled_control(metadata):
+    """Validate recorded interface/configuration; never infer executor semantics."""
+    b = metadata['bfm'];c = b.get('control',{});p = b.get('arm_target_processing',{})
+    hz = c.get('physics_hz')
+    expected = dict(zip(JOINTS['left']+JOINTS['right'],zip(np.array(LOW)[np.r_[0:7,13:20]].tolist(),np.array(HIGH)[np.r_[0:7,13:20]].tolist())))
+    if (b.get('contract_version')!=4 or b.get('control_architecture')!=DECOUPLED or 'execution' in b
+            or b.get('action_role')!='sampled_operator_target_not_execution_acknowledgement'
+            or b.get('action_dim')!=26 or b.get('action_group_order')!=list(GROUPS)
+            or c.get('execution_acknowledgements') is not False or c.get('sampling_independent_of_control') is not True
+            or c.get('hand_hz')!=50 or c.get('hand_clock')!='steady_wall_time'
+            or type(hz) not in (int,float) or not np.isfinite(hz) or not 0<hz<=2**31-1 or hz!=int(hz)
+            or p.get('clamping_enabled') is not True or p.get('unit')!='rad'
+            or p.get('transformation')!='per_joint_saturation' or p.get('bounds_source_sha256')!=MODEL_SHA256
+            or p.get('joint_limits')!={k:list(v) for k,v in expected.items()}):
+        raise ValueError('Invalid decoupled control/model/bounds metadata')
+    return decoupled_identity(hz)
+
+
+def decoupled_identity(hz):
+    if type(hz) not in (int,float) or not np.isfinite(hz) or not 0<hz<=2**31-1 or hz!=int(hz):raise ValueError('Invalid decoupled physics frequency')
+    return dict(control_architecture=DECOUPLED, policy_hz=15, physics_hz=int(hz), hand_hz=50,
+                hand_clock='steady_wall_time', execution_acknowledgements=False,
+                action_semantics=SharpaDecoupledContract().to_dict()['arm_semantics'])

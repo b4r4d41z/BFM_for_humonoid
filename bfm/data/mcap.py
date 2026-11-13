@@ -146,6 +146,9 @@ def read_records(episode):
     if meta.get('bfm',{}).get('contract_version')==4:
         from .execution_v4 import EXTRA
         topics.extend(EXTRA)
+        if meta['bfm'].get('control_architecture')=='decoupled_teleoperation_v1':
+            from .decoupled import HISTORY
+            topics.extend(HISTORY.values())
     hashes = {}
     for name in info["relative_file_paths"]:
         path = (bag/name).resolve()
@@ -164,6 +167,11 @@ def read_records(episode):
 
 
 def build(records, metadata, *, max_age_s, collection_commit, max_camera_skew_s=None):
+    if metadata.get('bfm', {}).get('control_architecture') == 'decoupled_teleoperation_v1':
+        from .mcap_decoupled import build as build_decoupled
+        return build_decoupled(records,metadata,max_age_s=max_age_s,collection_commit=collection_commit,max_camera_skew_s=max_camera_skew_s)
+    if metadata.get('bfm', {}).get('control_architecture') not in (None,'executor_v1'):
+        raise ValueError('Unsupported control architecture')
     if metadata.get('bfm', {}).get('contract_version') == 4:
         from .mcap_v4 import build as build_v4
         return build_v4(records, metadata, max_age_s=max_age_s, collection_commit=collection_commit, max_camera_skew_s=max_camera_skew_s)

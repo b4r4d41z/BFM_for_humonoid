@@ -1,6 +1,7 @@
-dataset_schema: sharpa_v4
+dataset_schema: sharpa_decoupled_v4
+allow_sampled_control_approximation: true  # Passive snapshots approximate full-rate human control.
 observation_profile: vision_proprio_v1
-dataset_manifest: data/zarr_15hz/manifest.json
+dataset_manifest: data/zarr_decoupled_v4/manifest.json
 output_dir: runs/fb/vision
 outcome: all
 

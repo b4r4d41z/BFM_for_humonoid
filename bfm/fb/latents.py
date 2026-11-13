@@ -33,7 +33,7 @@ def episode_embeddings(runtime, source, batch_size=8):
     if source.is_file():
         manifest = json.loads(source.read_text())
         if (
-            manifest.get('schema_version') not in ('3.0.0','4.0.0')
+            manifest.get('schema_version') not in ('3.0.0','4.0.0','4.1.0')
             or not manifest.get('dataset_id')
             or any(
                 e['split'] not in ('train', 'validation', 'test')
@@ -76,6 +76,11 @@ def episode_embeddings(runtime, source, batch_size=8):
             observation_profile='vision_proprio_v1',
         )
 
+    runtime_schema=runtime.payload.get('schema_version')
+    if '4.1.0' in (data.schema_version,runtime_schema) and data.schema_version!=runtime_schema:
+        raise ValueError('Reference dataset/checkpoint architecture mismatch')
+    if data.schema_version=='4.1.0' and data.control_metadata!=runtime.payload.get('control'):
+        raise ValueError('Reference dataset/checkpoint controller configuration mismatch')
     episodes = []
 
     for episode_idx, root in enumerate(data.roots, 1):

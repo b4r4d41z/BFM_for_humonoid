@@ -29,7 +29,7 @@ def restore_rng(state):
 
 def save_checkpoint(path, agent, replay, dataset, reference_states, reference_indices, run_config):
     payload = {
-        "format": ("vanilla_fb_sharpa_v4" if dataset.schema_version == "4.0.0" else "vanilla_fb_sharpa_v3") if getattr(dataset, "schema_version", None) in ("3.0.0","4.0.0") else "vanilla_fb_v1",
+        "format": ("vanilla_fb_sharpa_decoupled_v4" if dataset.schema_version == "4.1.0" else "vanilla_fb_sharpa_v4" if dataset.schema_version == "4.0.0" else "vanilla_fb_sharpa_v3") if getattr(dataset, "schema_version", None) in ("3.0.0","4.0.0","4.1.0") else "vanilla_fb_v1",
         "schema_version": getattr(dataset, "schema_version", SCHEMA_VERSION),
         "model_config": asdict(agent.model.cfg), "train_config": asdict(agent.cfg),
         "model": agent.model.state_dict(), "target_F": agent.target_F.state_dict(), "target_B": agent.target_B.state_dict(),
@@ -43,6 +43,10 @@ def save_checkpoint(path, agent, replay, dataset, reference_states, reference_in
     if getattr(dataset,'schema_version',None)=='4.0.0':
         payload['execution']=dataset.roots[0].attrs['execution']
         if any(r.attrs['execution']!=payload['execution'] for r in dataset.roots):raise ValueError('Mixed executor configurations')
+    if getattr(dataset,'schema_version',None)=='4.1.0':
+        payload['control_architecture']='decoupled_teleoperation_v1'
+        payload['robot']='kuavo_s40_sharpa'
+        payload['control']=dataset.control_metadata
     payload['observation_profile'] = agent.model.cfg.observation_profile
     if agent.model.observation_encoder is not None:
         payload['observation_identity'] = agent.model.observation_encoder.identity()
@@ -65,14 +69,22 @@ def save_checkpoint(path, agent, replay, dataset, reference_states, reference_in
 
 def load_payload(path):
     payload = torch.load(path, map_location="cpu", weights_only=True)
-    if payload.get("format") in ("vanilla_fb_sharpa_v3","vanilla_fb_sharpa_v4"):
+    if payload.get("format") in ("vanilla_fb_sharpa_v3","vanilla_fb_sharpa_v4","vanilla_fb_sharpa_decoupled_v4"):
         from bfm.contracts.sharpa import contract_for, FIELDS
-        version="4.0.0" if payload["format"].endswith("v4") else "3.0.0"
+        version="4.1.0" if payload["format"]=="vanilla_fb_sharpa_decoupled_v4" else "4.0.0" if payload["format"].endswith("v4") else "3.0.0"
         if payload.get("schema_version") != version or payload.get("contract") != contract_for(version).to_dict() or payload.get("state_fields") != list(FIELDS):
             raise ValueError("Sharpa checkpoint contract/order mismatch")
         if version=='4.0.0':
             from bfm.contracts.sharpa import execution_configuration
             execution_configuration(payload['execution'])
+        if version=='4.1.0':
+            from bfm.contracts.sharpa import DECOUPLED, decoupled_identity
+            c=payload.get('control',{})
+            if (payload.get('control_architecture')!=DECOUPLED or payload.get('robot')!='kuavo_s40_sharpa'
+                    or c!=decoupled_identity(c.get('physics_hz')) or c.get('control_architecture')!=DECOUPLED
+                    or c.get('execution_acknowledgements') is not False or c.get('policy_hz')!=15
+                    or type(c.get('physics_hz')) is not int or c['physics_hz']<=0 or 'execution' in payload):
+                raise ValueError('Invalid decoupled checkpoint control identity')
         cfg = ModelConfig(**payload["model_config"])
         if payload.get('observation_profile') != cfg.observation_profile:
             raise ValueError('Checkpoint observation profile mismatch; old collection-v2 checkpoints are unsupported')

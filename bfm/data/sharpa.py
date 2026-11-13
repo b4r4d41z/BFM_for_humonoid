@@ -18,10 +18,10 @@ SOURCES = ("state", "joints", *CAMERAS)
 
 def validate(root, *, check_image_pixels=True):
     m = dict(root.attrs)
-    if m.get("schema_name") != SCHEMA or m.get("schema_version") not in (VERSION, "4.0.0"):
-        raise ValueError("Requires Sharpa schema 3.0.0; legacy data cannot be reinterpreted")
+    if m.get("schema_name") != SCHEMA or m.get("schema_version") not in (VERSION, "4.0.0", "4.1.0"):
+        raise ValueError("Requires explicit Sharpa schema 3.0.0, 4.0.0 or 4.1.0; legacy data cannot be reinterpreted")
     from bfm.contracts.sharpa import contract_for, execution_configuration
-    version=m.get('schema_version');v4=version=='4.0.0'
+    version=m.get('schema_version');v4=version=='4.0.0';decoupled=version=='4.1.0'
     expected = contract_for(version).to_dict()
     if m.get("contract") != expected or m.get("state_order") != list(FIELDS):
         raise ValueError("State/action contract mismatch")
@@ -36,8 +36,8 @@ def validate(root, *, check_image_pixels=True):
         raise ValueError("Measured joint names must be unique and include both arms")
     if not m.get("source_episode_id") or not m.get("source_metadata") or len(m.get("collection_commit", "")) != 40:
         raise ValueError("Missing source provenance")
-    if m['source_metadata'].get('bfm', {}).get('contract_version') != (4 if v4 else 3):
-        raise ValueError('Collection v3 source metadata required; collection-v2 data cannot be relabelled')
+    if m['source_metadata'].get('bfm', {}).get('contract_version') != (4 if v4 or decoupled else 3):
+        raise ValueError('Source collection version differs from canonical schema; no relabeling')
     t = len(root["action"])
     shapes = {"action": (t, 26), "action_header_ns": (t,), "timestamp": (t,), "next_timestamp": (t,), "record_ns": (t,), "next_record_ns": (t,),
               "terminated": (t,), "truncated": (t,), "segment_id": (t,)}
@@ -51,6 +51,17 @@ def validate(root, *, check_image_pixels=True):
         for prefix in ('','next_'):
             for key in ('acceptance_ns','acceptance_record_ns','action_id','producer_session_index'):shapes[prefix+key]=(t,)
         shapes['duration']=(t,)
+    history=set()
+    if decoupled:
+        from bfm.contracts.sharpa import decoupled_control, DECOUPLED
+        from .decoupled import validate_history
+        if (m.get('control_architecture')!=DECOUPLED or m.get('control')!=decoupled_control(m['source_metadata'])
+                or m.get('sampled_control_approximation') is not True or m['source_metadata'].get('robot')!='kuavo_s40_sharpa'):
+            raise ValueError('Decoupled schema/control metadata mismatch')
+        history=validate_history(root)
+        shapes.update(duration=(t,),intervening_arm_max_delta=(t,14),intervening_hand_max_delta=(t,12),boundary_controller_arm_delta=(t,14),boundary_controller_hand_delta=(t,12))
+        for pre in ('','next_'):
+            shapes.update({pre+'action_id':(t,),pre+'producer_session_index':(t,),pre+'command_source_record_ns':(t,4)})
     for p in ("obs", "next_obs"):
         shapes.update({f"{p}/state": (t, 56), f"{p}/joint_position": (t, len(names)), f"{p}/joint_velocity": (t, len(names)),
                        f"{p}/source_record_ns": (t, 5), f"{p}/source_header_ns": (t, 5), f"{p}/sync_age_ns": (t, 5)})
@@ -61,15 +72,15 @@ def validate(root, *, check_image_pixels=True):
     present = set()
     root.visititems(lambda n, v: present.add(n) if isinstance(v, zarr.Array) else None)
     images = {f"{p}/images/{c}" for p in ("obs", "next_obs") for c in CAMERAS}
-    if present != set(shapes) | images:
+    if present != set(shapes) | images | history:
         raise ValueError("Missing/unexpected arrays")
     for k, shape in shapes.items():
         a = root[k][:]
         if a.shape != shape or a.dtype.kind not in "fiub" or not np.isfinite(a).all():
             raise ValueError(f"Invalid finite array {k}, expected {shape}")
         dtype = np.bool_ if k in ("terminated", "truncated") else np.int64 if k.endswith(("_ns", "segment_id")) else np.float64
-        if v4 and k.endswith("action_id"):dtype=np.uint64
-        if v4 and k.endswith("producer_session_index"):dtype=np.int64
+        if (v4 or decoupled) and k.endswith("action_id"):dtype=np.uint64
+        if (v4 or decoupled) and k.endswith("producer_session_index"):dtype=np.int64
         if a.dtype != dtype:
             raise ValueError(f"Wrong dtype for {k}: expected {dtype}")
     ActionNormalizer().normalize(root["action"][:])
@@ -93,7 +104,7 @@ def validate(root, *, check_image_pixels=True):
         raise ValueError('Duplicate/backward action record timestamps')
     if simulation:
         timing = m.get('policy_timing', {})
-        period = 1e9/15 if v4 else m['source_metadata']['bfm']['policy_clock']['period_ns']
+        period = 1e9/15 if v4 or decoupled else m['source_metadata']['bfm']['policy_clock']['period_ns']
         if (timing.get('domain') != 'action_header_simulation_ns' or timing.get('period_ns') != period
                 or type(timing.get('tolerance_ns')) is not int or not 0 <= timing['tolerance_ns'] < period / 2):
             raise ValueError('Invalid stored simulation policy timing')
@@ -113,6 +124,17 @@ def validate(root, *, check_image_pixels=True):
             p,np_=root['acceptance_ns'][:],root['next_acceptance_ns'][:]
             if any(continuity_reason(a,b,timing) for a,b in zip(p,np_)):raise ValueError('Invalid acceptance adjacency')
             if not np.allclose(root['duration'][:],(np_-p)/1e9,atol=1e-12,rtol=0):raise ValueError('Invalid v4 duration')
+        if decoupled:
+            from .policy_time import policy_timing
+            if timing!=policy_timing(m['source_metadata']['bfm']):raise ValueError('Decoupled clock metadata mismatch')
+            if not np.allclose(root['duration'][:],(np_-p)/1e9,atol=1e-12,rtol=0):raise ValueError('Decoupled duration mismatch')
+            for pre in ('','next_'):
+                ids=root[pre+'action_id'][:];session=root[pre+'producer_session_index'][:]
+                if (ids==0).any() or (session<0).any() or (session>=len(m['producer_sessions'])).any():raise ValueError('Invalid sampled identity')
+                if (root[pre+'command_source_record_ns'][:]>root[pre+'record_ns'][:][:,None]).any():raise ValueError('Future command used as sampled action')
+            if (root['producer_session_index'][:]!=root['next_producer_session_index'][:]).any() or (root['next_action_id'][:]<=root['action_id'][:]).any():raise ValueError('Invalid sampled transition identity')
+            for key in ('intervening_arm_max_delta','intervening_hand_max_delta'):
+                if (root[key][:]<0).any():raise ValueError('Negative control change diagnostic')
         origin = m['policy_origin_ns']
     else:
         p, np_, origin = r, nr, m['record_origin_ns']
@@ -132,6 +154,9 @@ def validate(root, *, check_image_pixels=True):
         raise ValueError('Simulation policy timestamps are discontinuous')
     if (nr[:-1][~continuous] >= r[1:][~continuous]).any():
         raise ValueError("Segments overlap")
+    if decoupled:
+        for key in ('action_id','producer_session_index','command_source_record_ns'):
+            if not np.array_equal(root['next_'+key][:-1][continuous],root[key][1:][continuous]):raise ValueError('Sampled identity/provenance continuity failed')
     if v4:
         for key in ('action_id','producer_session_index','acceptance_ns','acceptance_record_ns'):
             if not np.array_equal(root['next_'+key][:-1][continuous],root[key][1:][continuous]):raise ValueError('v4 execution identity continuity failed')
@@ -161,7 +186,7 @@ def write(path, arrays, metadata):
         root = zarr.open_group(str(temporary), mode="w")
         root.attrs.update(metadata)
         for k, v in arrays.items():
-            root.create_dataset(k, data=v, chunks=(1 if '/images/' in k else min(len(v), 1024),) + v.shape[1:], compressor=Blosc(cname="zstd", clevel=3))
+            root.create_dataset(k, data=v, chunks=(1 if '/images/' in k else max(1,min(len(v), 1024)),) + v.shape[1:], compressor=Blosc(cname="zstd", clevel=3))
         result = validate(root)
         os.rename(temporary, path)
         return result
@@ -179,8 +204,8 @@ class SharpaDataset:
         self.image_rows, self.roots, self.episode_fingerprints = [], [], []
         path = Path(manifest)
         self.manifest = json.loads(path.read_text())
-        if self.manifest.get("schema_version") not in (VERSION,"4.0.0") or not self.manifest.get("dataset_id"):
-            raise ValueError("Requires explicit Sharpa v3 manifest")
+        if self.manifest.get("schema_version") not in (VERSION,"4.0.0","4.1.0") or not self.manifest.get("dataset_id"):
+            raise ValueError("Requires an explicit supported Sharpa manifest")
         from bfm.contracts.sharpa import contract_for
         version=self.manifest['schema_version']
         self.contract, self.ids, self.episodes = contract_for(version), [], []
@@ -195,6 +220,12 @@ class SharpaDataset:
             if identity in seen_ids or p in seen_paths or entry["split"] not in ("train", "validation", "test"):
                 raise ValueError("Duplicate source episode/path or invalid split; never split a recording's frames")
             seen_ids.add(identity); seen_paths.add(p)
+            if version=='4.1.0':
+                from bfm.contracts.sharpa import decoupled_control
+                control=decoupled_control(root.attrs['source_metadata'])
+                if control!=root.attrs['control']:raise ValueError('Decoupled configuration mismatch')
+                if hasattr(self,'control_metadata') and self.control_metadata!=control:raise ValueError('Mixed decoupled controller/physics configurations')
+                self.control_metadata=control
             if entry["split"] != split:
                 continue
             if outcome != 'all' and root.attrs.get('success') is not (outcome == 'successful'):
@@ -217,7 +248,10 @@ class SharpaDataset:
                     update(key.encode())
                     update(root.store[key])
             keys = ("obs/state", "next_obs/state", "action", "terminated", "truncated", "timestamp", "next_timestamp", "segment_id")
-            if version=='4.0.0':keys += tuple(k for k in root.array_keys() if k not in keys)
+            if version in ('4.0.0','4.1.0'):keys += tuple(k for k in root.array_keys() if k not in keys)
+            if version=='4.1.0':
+                for key in sorted(k for k in root.store if k.startswith('control_history/')):
+                    update(key.encode());update(root.store[key])
             data = {k: root[k][:] for k in keys}
             if observation_profile == VISION:
                 for p in ('obs', 'next_obs'):

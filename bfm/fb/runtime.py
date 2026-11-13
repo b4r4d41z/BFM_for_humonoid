@@ -62,6 +62,15 @@ class VisualRuntime:
             raise ValueError('v4 runtime requires v4-trained checkpoint; no legacy relabeling')
         execution_configuration(self.payload['execution'])
 
+    def require_decoupled(self, physics_hz=None):
+        from bfm.contracts.sharpa import SharpaDecoupledContract, DECOUPLED
+        if (self.payload.get('format')!='vanilla_fb_sharpa_decoupled_v4'
+                or self.payload.get('contract')!=SharpaDecoupledContract().to_dict()
+                or self.payload.get('control_architecture')!=DECOUPLED):
+            raise ValueError('Decoupled runtime requires a decoupled-trained checkpoint')
+        if physics_hz is not None and self.payload['control']['physics_hz']!=physics_hz:
+            raise ValueError('Runtime physics configuration differs from checkpoint')
+
     def task(self, value):
         z = torch.as_tensor(value, dtype=torch.float32, device=self.model.device)
         if z.shape == (self.model.cfg.latent_dim,):
@@ -146,6 +155,9 @@ class VisualRuntime:
 def validate_ros_config(config):
     from bfm.contracts.sharpa import SharpaContract, SharpaV4Contract
     v4=config.get('control_contract_version',3)==4
+    decoupled=config.get('control_architecture')=='decoupled_teleoperation_v1'
+    if config.get('control_architecture') not in (None,'executor_v1','decoupled_teleoperation_v1'):raise ValueError('Unknown runtime architecture')
+    if decoupled and (not v4 or type(config.get('physics_hz')) is not int or config['physics_hz']<=0 or 'execution_status_topic' in config or 'ack_timeout_wall_s' in config):raise ValueError('Invalid decoupled runtime configuration')
     if config.get('control_contract_version',3) not in (3,4):raise ValueError('Unknown runtime contract')
     if (config['cameras'] != list(CAMERAS) or config['proprio_order'] != 'vision_proprio_v1'
             or config['action_dim'] != 26 or config['normalized_bounds'] != [-1,1]
@@ -153,7 +165,7 @@ def validate_ros_config(config):
             or config['policy_hz'] != (15 if v4 else 1/SharpaContract().policy_dt)):
         raise ValueError('ROS configuration differs from checkpoint observation/action contract')
     validate_inference_config(config.get('inference_precision', 'fp32'), config.get('profile_inference', False))
-    if v4 and (not config.get('use_sim_time') or config['output_topics']!={'action':'/bfm/action'} or config.get('execution_status_topic')!='/bfm/execution_status'):
+    if v4 and (not config.get('use_sim_time') or config['output_topics']!={'action':'/bfm/action'} or (not decoupled and config.get('execution_status_topic')!='/bfm/execution_status')):
         raise ValueError('Invalid v4 simulation interface')
     topics=[config['joint_topic'],*config['camera_topics'].values(),*config['output_topics'].values()]
     if set(config['camera_topics'])!=set(CAMERAS) or set(config['output_topics'])!=({'action'} if v4 else {'arm','hand','action'}) or len(set(topics))!=len(topics) or any(not isinstance(t,str) or not t.startswith('/') for t in topics):

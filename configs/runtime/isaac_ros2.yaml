@@ -2,9 +2,9 @@ checkpoint: null
 task_z: null
 use_sim_time: true
 control_contract_version: 4
+control_architecture: decoupled_teleoperation_v1
+physics_hz: 60  # Must match the training contract and external simulator configuration.
 policy_hz: 15.0
-execution_status_topic: /bfm/execution_status
-ack_timeout_wall_s: 0.5
 max_age_s: 2.0
 max_camera_skew_s: null
 cameras: [head, left_wrist, right_wrist]
@@ -25,7 +25,7 @@ mode: shadow
 warmup_ticks: 10
 max_policy_steps: 300
 safety:
-  max_arm_delta_rad: 0.1  # Legacy v3 only; v4 always delegates trajectory limiting to Synthetic.
+  max_arm_delta_rad: null  # Direct bridge targets: no hidden BFM slew limiter.
 logging:
   output_root: runs/eval
 
