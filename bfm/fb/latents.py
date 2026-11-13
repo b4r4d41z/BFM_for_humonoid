@@ -15,6 +15,15 @@ from bfm.contracts.vision import CAMERAS, proprioception
 from bfm.data.sharpa import SharpaDataset, validate
 
 
+def retained_endpoints(root):
+    """Original full-trajectory ordering; shared next/obs endpoints appear once."""
+    endpoints = {}
+    for prefix, key in [('obs', 'record_ns'), ('next_obs', 'next_record_ns')]:
+        for row, time in enumerate(root[key][:]):
+            endpoints[int(time)] = (prefix, row)
+    return [(time, *endpoints[time]) for time in sorted(endpoints)]
+
+
 def episode_embeddings(runtime, source, batch_size=8):
     if batch_size < 1:
         raise ValueError('Positive embedding batch size required')
@@ -74,16 +83,7 @@ def episode_embeddings(runtime, source, batch_size=8):
 
         # Full retained trajectory, including final next_obs; shared endpoints
         # appear once. Segments are averaged together within the source episode.
-        endpoints = {}
-
-        for prefix, key in [
-            ('obs', 'record_ns'),
-            ('next_obs', 'next_record_ns'),
-        ]:
-            for row, time in enumerate(root[key][:]):
-                endpoints[int(time)] = (prefix, row)
-
-        points = [endpoints[t] for t in sorted(endpoints)]
+        points = [(prefix, row) for _, prefix, row in retained_endpoints(root)]
         chunks = []
 
         for start in tqdm(
@@ -141,6 +141,7 @@ def episode_embeddings(runtime, source, batch_size=8):
 
 
 def balanced_task(model, episodes):
+    """EpisodeBalancedZ: equal episode means, then the original projection."""
     successful = [
         e for e in episodes
         if e['success'] is True
@@ -164,6 +165,10 @@ def balanced_task(model, episodes):
     return model.project_z(
         mean.to(model.device)
     ).detach().cpu()
+
+
+# Additive public name; existing callers and saved method identifiers stay valid.
+EpisodeBalancedZ = balanced_task
 
 
 def save_task(runtime, episodes, output):
