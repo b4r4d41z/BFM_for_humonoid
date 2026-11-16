@@ -86,7 +86,26 @@ Gateway callback time or physical application, and hashes do not authenticate
 publishers. These limitations also apply to explicit v1 evidence.
 
 Sensor selection is latest MCAP log time <= action record time, with explicit
-freshness/skew limits and no pre-boundary observations. Native headers remain
+freshness/skew limits and no pre-boundary observations. New conversions declare
+`synchronization_policy.name=decoupled_camera_sim_time_v1`: state/joint freshness
+still uses recorder time, while each camera requires
+`0 <= Action.header.stamp - Camera.header.stamp <= 100 ms` in simulation time.
+This requires the recorded Isaac camera/Action clock declarations and matching
+recorded /clock ranges within the same lifecycle/clock epoch. Missing, invalid,
+future, stale or unverifiable frames reject the tick; no older-image fallback
+or future recorder message is used. Across resets, overlapping old/new simulation
+timestamps cannot uniquely identify a delayed frame, so they fail closed until
+the selected frame's epoch is unambiguous. Missing clock declarations also fail
+closed; this patch does not infer clocks from arbitrary ROS headers.
+
+`obs/camera_age_sim_ns[T,3]` and `next_obs/camera_age_sim_ns[T,3]` follow
+head/left_wrist/right_wrist order. Existing `sync_age_ns`, `max_age_ns`, source age
+statistics and camera skew diagnostics retain their recorder-time meanings;
+camera entries in `max_age_ns` are no longer admission limits under the new policy.
+Stores without `synchronization_policy` retain legacy all-recorder-time validation.
+Unknown policies are rejected. New metadata/arrays and converter identity separate
+new datasets/caches from old ones; use the safe reconversion procedure above.
+No source data or existing stores need rewriting. Native headers otherwise remain
 separate provenance; no subtraction across clock domains. Repeated latest targets
 are legitimate: source age is recorded, not replaced by a fabricated watchdog.
 A sampler/recorder race without verifiable source evidence fails closed.

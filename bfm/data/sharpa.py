@@ -51,7 +51,10 @@ def validate(root, *, check_image_pixels=True):
         for prefix in ('','next_'):
             for key in ('acceptance_ns','acceptance_record_ns','action_id','producer_session_index'):shapes[prefix+key]=(t,)
         shapes['duration']=(t,)
-    history=set()
+    history=set();camera_sync=None
+    if 'synchronization_policy' in m:
+        from .camera_sync import POLICY
+        if not decoupled or m['synchronization_policy']!=POLICY:raise ValueError('Unsupported synchronization policy')
     if decoupled:
         from bfm.contracts.sharpa import decoupled_control, DECOUPLED
         from .decoupled import validate_history
@@ -61,6 +64,10 @@ def validate(root, *, check_image_pixels=True):
         history=validate_history(root)
         from .source_provenance import validate_provenance
         validate_provenance(root)
+        if 'synchronization_policy' in m:
+            from .camera_sync import CameraSync
+            camera_sync=CameraSync.from_zarr(root)
+            for p in ('obs','next_obs'):shapes[p+'/camera_age_sim_ns']=(t,3)
         shapes.update(duration=(t,),intervening_arm_max_delta=(t,14),intervening_hand_max_delta=(t,12),boundary_controller_arm_delta=(t,14),boundary_controller_hand_delta=(t,12))
         for pre in ('','next_'):
             shapes.update({pre+'action_id':(t,),pre+'producer_session_index':(t,),pre+'command_source_record_ns':(t,4)})
@@ -91,8 +98,15 @@ def validate(root, *, check_image_pixels=True):
         tick = root["record_ns" if p == "obs" else "next_record_ns"][:]
         age = tick[:, None] - root[f"{p}/source_record_ns"][:]
         limits = np.asarray(m["max_age_ns"])
-        if limits.shape != (5,) or (limits <= 0).any() or (age < 0).any() or (age > limits).any() or not np.array_equal(age, root[f"{p}/sync_age_ns"][:]):
+        checked=age[:,:2] if camera_sync is not None else age
+        if limits.shape != (5,) or (limits <= 0).any() or (age < 0).any() or (checked > limits[:checked.shape[1]]).any() or not np.array_equal(age, root[f"{p}/sync_age_ns"][:]):
             raise ValueError("Future/stale source sample or incorrect sync age")
+        if camera_sync is not None:
+            stamps=root['action_header_ns' if p=='obs' else 'next_action_header_ns'][:]
+            for i,(record,stamp) in enumerate(zip(tick,stamps)):
+                sim_age,reason=camera_sync.ages(record,stamp,root[p+'/source_record_ns'][i,2:],root[p+'/source_header_ns'][i,2:])
+                if reason or not np.array_equal(sim_age,root[p+'/camera_age_sim_ns'][i]):
+                    raise ValueError('Invalid camera simulation freshness: '+str(reason or 'incorrect age'))
         for c in CAMERAS:
             arr = root[f"{p}/images/{c}"]
             if arr.dtype != np.uint8 or len(arr.shape) != 4 or arr.shape[0] != t or arr.shape[-1] != 3 or min(arr.shape[1:3]) < 1:
@@ -163,6 +177,7 @@ def validate(root, *, check_image_pixels=True):
         for key in ('action_id','producer_session_index','acceptance_ns','acceptance_record_ns'):
             if not np.array_equal(root['next_'+key][:-1][continuous],root[key][1:][continuous]):raise ValueError('v4 execution identity continuity failed')
     keys = ["state", "joint_position", "joint_velocity", "source_record_ns", "source_header_ns", "sync_age_ns"]
+    if camera_sync is not None:keys.append('camera_age_sim_ns')
     if m.get("has_effort"):
         keys.append("joint_effort")
     for key in keys:

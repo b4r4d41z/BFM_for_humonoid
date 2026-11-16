@@ -202,3 +202,27 @@ data/zarr_decoupled_v4/*
 /data/zarr_batch4_test/
 /data/zarr_decoupled_v4/
 /data/feature_cache_decoupled_v4/
+# Local datasets and experimental artifacts
+*.mcap
+/data/current_sample/
+/data/training_analysis/
+/data/feature_cache_decoupled_v4/
+
+# Local pretrained weights
+/models/dinov2-small/model.safetensors
+
+# Local datasets and converted recordings
+/data/
+
+# Training runs, experiments and visualizations
+/runs/
+
+# Model checkpoints
+/checkpoints/
+
+# Local experimental outputs
+/results/
+/outputs/
+/logs/
+/tensorboard/
+/wandb/

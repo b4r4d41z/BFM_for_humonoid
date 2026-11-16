@@ -5,6 +5,7 @@ from bfm.contracts.sharpa import (SCHEMA,PROFILE,FIELDS,GROUPS,MODEL_SHA256,Shar
 from .mcap import ACTION,TOPICS,CLOCK,EPISODE,RECORDING,lifecycle,asof,header_ns,decode_image
 from .decoupled import verify_commands,history_arrays,HISTORY,arm_values,hand_values,ARMS,HANDS
 from .source_provenance import Provenance
+from .camera_sync import CameraSync, POLICY as CAMERA_SYNC_POLICY
 from .policy_time import policy_timing,continuity_reason
 from .sharpa import CAMERAS,SOURCES
 from .execution_v4 import identity
@@ -22,6 +23,7 @@ def build(records,metadata,*,max_age_s,collection_commit,max_camera_skew_s=None)
     command_warnings=verify_commands(records)
     verifier=Provenance(records,metadata);associations=[]
     actions=records[ACTION];timing=policy_timing(bfm,records[CLOCK])
+    camera_sync=CameraSync(records,metadata)
     limits=np.asarray(max_age_s,dtype=float)
     if limits.shape!=(5,) or not np.isfinite(limits).all() or (limits<=0).any():raise ValueError('Five positive freshness limits required')
     limits=np.rint(limits*1e9).astype(np.int64)
@@ -58,8 +60,11 @@ def build(records,metadata,*,max_age_s,collection_commit,max_camera_skew_s=None)
         ages=np.array([record-p[0] if p else np.iinfo(np.int64).max for p in picked],dtype=np.int64)
         if any(p is None for p in picked):reasons.append('missing_observation')
         elif any(p[0]<lower_bound for p in picked):reasons.append('pre_boundary_observation')
-        elif (ages>limits).any():reasons.append('stale_observation')
-        elif max_camera_skew_s is not None and np.ptp([p[0] for p in picked[2:]])>max_camera_skew_s*1e9:reasons.append('camera_skew')
+        else:
+            if (ages[:2]>limits[:2]).any():reasons.append('stale_observation')
+            camera_ages,camera_reason=camera_sync.ages(record,stamp,[p[0] for p in picked[2:]],[header_ns(p[1]) for p in picked[2:]])
+            if camera_reason:reasons.append(camera_reason)
+            if max_camera_skew_s is not None and np.ptp([p[0] for p in picked[2:]])>max_camera_skew_s*1e9:reasons.append('camera_skew')
         if reasons:
             rejects.append(dict(index=i,record_ns=record,action_header_ns=stamp,reasons=reasons));ticks.append(None);continue
         state,js,*images=[p[1] for p in picked]
@@ -67,7 +72,8 @@ def build(records,metadata,*,max_age_s,collection_commit,max_camera_skew_s=None)
         if names is None:names=list(js.name)
         if names!=list(js.name) or len(set(names))!=len(names):raise ValueError('Changing/duplicate measured joints')
         row=dict(state=flatten_state(state),source_record_ns=np.array([p[0] for p in picked],dtype=np.int64),
-                 source_header_ns=np.array([header_ns(p[1]) for p in picked],dtype=np.int64),sync_age_ns=ages)
+                 source_header_ns=np.array([header_ns(p[1]) for p in picked],dtype=np.int64),sync_age_ns=ages,
+                 camera_age_sim_ns=camera_ages)
         for field in ('position','velocity'):
             a=np.asarray(getattr(js,field),dtype=np.float64)
             if a.shape!=(len(names),) or not np.isfinite(a).all():raise ValueError('Invalid measured joints')
@@ -126,6 +132,7 @@ def build(records,metadata,*,max_age_s,collection_commit,max_camera_skew_s=None)
                                        'no ACK or measured controller application time; snapshots do not describe all intervening inputs'],
                joint_names=names,joint_units=dict(position='rad',velocity='rad/s',effort='N*m'),has_effort=effort,
                sync_clock='mcap_log_time_ns',source_columns=list(SOURCES),max_age_ns=limits.tolist(),
+               synchronization_policy=dict(CAMERA_SYNC_POLICY),
                source_episode_id=bfm['episode']['episode_id'],collection_commit=collection_commit,source_metadata=metadata,
                success=metadata.get('success'),stored_image_encoding='rgb8',source_image_encodings=encodings,
                image_shapes={c:list(arrays['obs/images/'+c].shape[1:]) for c in CAMERAS},policy_timing=timing,

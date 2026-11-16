@@ -31,6 +31,7 @@ def decoupled(source):
     r[RAW_ARM]=[];r[HELD[0]]=[];r[HISTORY['raw_arm']]=[];r[HELD[1]]=[];r[HISTORY['raw_hand']]=[]
     for i,(record,action) in enumerate(r[ACTION]):
         action.header=header(i*10**9//15);action.producer_session_id='fixture';action.action_id=i+1
+        for topic in TOPICS[2:]:r[topic][i][1].header=header(i*10**9//15)
         action.left_arm_target[0]+=.005*i
         for offset,change in [(-2_000_000,0),(30_000_000,.002)]:
             target=copy.deepcopy(arm);target.header=header(400_000_000_000+2*i+(offset>0));target.position[0]=action.left_arm_target[0]+change
@@ -42,6 +43,8 @@ def decoupled(source):
         r[HISTORY[side+'_fingers']]=[(origin+j*20_000_000,NS(header=header(700_000_000_000+j*20_000_000),name=[side+'_index_PIP'],position=[.1])) for j in range(32)]
     r[CLOCK]=[(origin+j*10**9//60,NS(clock=header(j*10**9//60).stamp)) for j in range(39)]
     m['camera_configuration']={'model_sha256':MODEL_SHA256};m['success']=True
+    m['clock_domains']={'camera_image.header.stamp':'Isaac ROS2CameraHelper simulation time (default useSystemTime=false); render cadence unchanged',
+                        '/bfm/action.header.stamp':'selected /clock sample; decision generation, not measured controller application'}
     m['robot']='kuavo_s40_sharpa';m['recording_code']={'commit_sha':'a'*40,'status':'available','dirty':True,'dirty_sha256':'b'*64}
     m['bfm'].update(contract_version=4,control_architecture=DECOUPLED,action_role='sampled_operator_target_not_execution_acknowledgement',policy_hz=15,policy_dt=1/15,
                     policy_clock=dict(domain='isaac_simulation',topic=CLOCK,period_ns_numerator=10**9,period_ns_denominator=15),
@@ -120,7 +123,12 @@ def test_skips_stale_and_lifecycle_not_bridged(decoupled,tmp_path):
     r,m=decoupled;origin=r[ACTION][0][0]
     r[TOPICS[2]].pop(2)
     a,attrs=convert_fixture(decoupled)
-    assert attrs['rejected_decisions'][0]['index']==2 and len(a['action'])==7
+    # The previous frame is only 66.7 simulation ms old, despite exceeding the
+    # fixture's 50 ms wall-time limit. A truly stale frame still splits segments.
+    assert len(a['action'])==9
+    r[TOPICS[2]].pop(2)
+    a,attrs=convert_fixture(decoupled)
+    assert attrs['rejected_decisions'][0]['index']==3 and len(a['action'])==7
     assert a['truncated'].sum()==2
     write(tmp_path/'gaps.zarr',a,attrs)
     # A missed policy message removes the interval, rather than inventing a held target.
@@ -223,7 +231,7 @@ def test_reset_and_stop_boundary(decoupled,tmp_path):
     for _,msg in r[ACTION][5:]:msg.header=header(msg.header.stamp.sec*10**9+msg.header.stamp.nanosec-5*10**9//15)
     for _,msg in r[CLOCK][20:]:msg.clock=header(msg.clock.sec*10**9+msg.clock.nanosec-20*10**9//60).stamp
     a,attrs=convert_fixture(decoupled)
-    assert a['truncated'].sum()==2
+    assert a['truncated'].sum()==1  # Post-reset camera headers still belong to the old epoch.
     write(tmp_path/'reset.zarr',a,attrs)
 
 
