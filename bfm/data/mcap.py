@@ -458,8 +458,12 @@ def build(records, metadata, *, max_age_s, collection_commit, max_camera_skew_s=
 
 def convert(episode, output, *, max_age_s, collection_commit, max_camera_skew_s=None):
     records, metadata, bag_metadata, hashes = read_records(episode)
-    arrays, attrs = build(records, metadata, max_age_s=max_age_s, collection_commit=collection_commit,
-                          max_camera_skew_s=max_camera_skew_s)
+    try:
+        arrays, attrs = build(records, metadata, max_age_s=max_age_s, collection_commit=collection_commit,
+                              max_camera_skew_s=max_camera_skew_s)
+    except ValueError as exc:
+        exc.total_action_ticks = len(records.get(ACTION, []))
+        raise
     attrs.update(source_bag_metadata=bag_metadata, source_mcap_sha256=hashes)
     print(json.dumps({"sync_before_filter": attrs.get("sync_statistics_before_filter", {}), "rejected_ticks": attrs["rejected_ticks"]}))
     return write(output, arrays, attrs)

@@ -54,7 +54,9 @@ callback sequences, native headers, names, pre-clamp values, recorded bounds and
 the decision simulation stamp are verified. Canonical targets must match exactly
 as binary64, including signed zero. Trace receipt may precede or follow Action
 receipt. Repeated identical traces are idempotent; conflicting identities,
-missing evidence, malformed claims and corrupt hashes fail closed. A declared
+malformed claims and corrupt hashes remain fatal. A missing trace excludes that
+Action without inventing evidence; a digest identifying a different trace key is
+contradictory and remains fatal. A declared
 protocol or new Action fields can never fall back to historical matching.
 Policy/default version-zero Actions are not operator demonstrations.
 
@@ -133,7 +135,24 @@ Build a **new** feature cache for reconverted stores; do not reuse the old cache
 identity. No raw recording or checkpoint needs rewriting, and no model behavior,
 training configuration or preprocessing changed.
 
-Policy headers must be witnessed by /clock. Metadata physics Hz determines the
+Policy headers must be witnessed by /clock. A valid but unwitnessed timestamp
+excludes that Action, including startup prefixes and interior evidence gaps.
+Invalid, duplicate/backward timestamps or identities remain fatal, even on an
+otherwise excluded Action. Provenance integrity is still checked on unwitnessed
+Actions; a missing clock cannot hide a corrupt hash or contradictory trace.
+Only original adjacent verified endpoints form transitions. Exclusions remove
+both touching intervals and split segments; they never create terminal success.
+`rejected_decisions` retains Action index, ID, producer, simulation/record times
+and reasons. `action_provenance` retains missing-trace exclusions for validation
+against the complete hashed history. No new Zarr schema is introduced.
+
+Batch conversion continues after recording-local failures, writes the destination's
+`conversion_report.json`, and summarizes converted/reused/failed inputs. See
+`docs/train_from_recordings.md` for global abort conditions and CLI exit status.
+Use a fresh output destination after converter changes; old keys/caches are not
+silently reused or overwritten.
+
+Metadata physics Hz determines the
 quantization tolerance; actual clock gaps/reset evidence splits transitions.
 60/100/120/300 Hz are tested; 100 is not divisible by 15. Adjacent decisions permit
 one physics-step quantization, never a missed policy period. At coarse physics rates,

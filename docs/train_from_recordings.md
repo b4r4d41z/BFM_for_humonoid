@@ -45,9 +45,26 @@ raw identity and must precede the next policy record. Legacy recordings keep the
 existing association rules. No controller-frequency or message-count assumption
 is made; invalid canonical actions/provenance still abort conversion.
 
-Progress shows sample N/total, episode name, a bar, and converting/validated/skipped/
-failed status. `skipped` means a validated identical conversion is reused, not that
-invalid input is ignored. Any failed episode aborts conversion.
+Progress prints one completion line per recording: `CONVERTED`,
+`CONVERTED_WITH_SKIPS`, `REUSED`, or `FAILED`, with transitions or the failure.
+Recording-local validation/MCAP errors are reported and subsequent inputs continue.
+Failed recordings never contribute a new store or manifest entry. The destination's
+`conversion_report.json` is written atomically, with per-recording identity/path,
+status, total/excluded Actions, exclusion reasons and IDs, transitions, segments,
+and exception type/message. Counts unavailable before decoding are JSON null.
+A final summary repeats failed inputs and totals only successful/reused inputs.
+The CLI exits 1 if any input failed; the Python `prepare()` API returns the manifest
+when a dataset is available. If no valid stores remain, all inputs are still
+processed and reported, then `NoSuccessfulRecordings` is raised without publishing
+an empty training manifest.
+
+Invalid global settings, destination I/O/permissions, cancellation, unknown errors,
+corrupt existing manifests/stores, duplicate identities and incompatible destination
+contracts still abort. Existing artifacts with changed source/policy/converter keys
+also abort: move them aside explicitly or use a fresh destination. A failed raw
+source already represented by an existing store is likewise a destination conflict;
+its old manifest is preserved, never silently republished as a successful new input.
+Reports distinguish an aborted batch from a completed batch with recording failures.
 Completed earlier stores remain valid and reusable. Temporary conversions are
 removed on ordinary failures; even after process termination their hidden temporary
 directories are never discovered as final stores. An existing store is validated

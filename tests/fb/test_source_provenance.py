@@ -83,10 +83,9 @@ def test_explicit_reordering_reuse_order_and_uint64(decoupled,tmp_path):
     with pytest.raises(ValueError,match='differs from recorded evidence'):validate(writable)
 
 
-@pytest.mark.parametrize('fault',['missing','digest','session','conflict','input_conflict','action','names','dimensions','nan','hand_range','bounds','zero_claim','declaration','null_declaration','duplicate_json'])
+@pytest.mark.parametrize('fault',['digest','session','conflict','input_conflict','action','names','dimensions','nan','hand_range','bounds','zero_claim','declaration','null_declaration','duplicate_json'])
 def test_explicit_fail_closed(decoupled,fault):
     r,m=explicit(decoupled)
-    if fault=='missing':r[TOPIC].pop(3)
     if fault=='digest':r[ACTION][3][1].source_provenance_sha256='0'*64
     if fault=='session':alter((r,m),3,lambda t:t.update(producer_session_id='other'))
     if fault=='conflict':
@@ -205,18 +204,11 @@ def test_existing_41_store_remains_valid(decoupled,tmp_path):
     assert write(tmp_path/'existing.zarr',arrays,attrs)['transitions']==9
 
 
-def test_actual_v1_cdr_schema_and_persistent_history(decoupled,tmp_path):
-    """Encode the authoritative appended fields, then use production MCAP reader."""
+def write_recording(raw, r, m):
+    """Shared serialized v1 fixture for converter and batch regression tests."""
     from mcap_ros2.writer import Writer
     import yaml
-    r,m=explicit(decoupled)
-    record,_=r[ACTION][3];newer=copy.deepcopy(asof(r[RAW_ARM],record)[1])
-    newer.position[0]+=2*np.pi/4096;newer.header.stamp.nanosec+=123
-    for topic in (RAW_ARM,HELD[0]):r[topic].append((record-100_000,copy.deepcopy(newer)))
-    for i,(_,msg) in enumerate(r[ACTION]):
-        msg.action_id+=2**53
-        alter((r,m),i,lambda t:t.update(action_id=t['action_id']+2**53))
-    raw=tmp_path/'raw';(raw/'bag').mkdir(parents=True)
+    (raw/'bag').mkdir(parents=True)
     (raw/'episode.json').write_text(json.dumps(m))
     (raw/'bag/metadata.yaml').write_text(yaml.safe_dump(dict(rosbag2_bagfile_information=dict(storage_identifier='mcap',relative_file_paths=['bag_0.mcap']))))
     deps='\n'+'='*80+'\nMSG: std_msgs/Header\nbuiltin_interfaces/Time stamp\nstring frame_id\n'+'='*80+'\nMSG: builtin_interfaces/Time\nint32 sec\nuint32 nanosec\n'
@@ -237,6 +229,18 @@ def test_actual_v1_cdr_schema_and_persistent_history(decoupled,tmp_path):
         for topic,samples in r.items():
             for record,msg in samples:writer.write_message(topic,schemas[topic],dictionary(msg),log_time=record,publish_time=record)
         writer.finish()
+
+
+def test_actual_v1_cdr_schema_and_persistent_history(decoupled,tmp_path):
+    """Encode the authoritative appended fields, then use production MCAP reader."""
+    r,m=explicit(decoupled)
+    record,_=r[ACTION][3];newer=copy.deepcopy(asof(r[RAW_ARM],record)[1])
+    newer.position[0]+=2*np.pi/4096;newer.header.stamp.nanosec+=123
+    for topic in (RAW_ARM,HELD[0]):r[topic].append((record-100_000,copy.deepcopy(newer)))
+    for i,(_,msg) in enumerate(r[ACTION]):
+        msg.action_id+=2**53
+        alter((r,m),i,lambda t:t.update(action_id=t['action_id']+2**53))
+    raw=tmp_path/'raw';write_recording(raw,r,m)
     decoded,*_=read_records(raw)
     assert decoded[ACTION][0][1].source_provenance_version==1
     assert plain(decoded[ACTION][0][1])['action_id']==2**53+1  # Dynamic messages have empty __dict__ plus populated slots.

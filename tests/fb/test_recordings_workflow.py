@@ -77,15 +77,17 @@ def test_batch_reuse_progress_manifest_and_real_training(source, tmp_path, monke
     assert json.loads(manifest.read_text())['episodes'][0]['split']=='validation'
 
 
-@pytest.mark.parametrize('failure',['conversion','provenance','changed_source','invalid_existing'])
+@pytest.mark.parametrize('failure',['conversion','provenance','changed_source','invalid_existing','old_converter'])
 def test_fail_closed_and_atomic_outputs(source,tmp_path,monkeypatch,failure):
     episode=raw(tmp_path/'raw',source,'bad')
     destination=tmp_path/'zarr'
     calls=[]
     monkeypatch.setattr(recordings,'convert',generated_converter(source,calls))
-    if failure in ('changed_source','invalid_existing'):
+    if failure in ('changed_source','invalid_existing','old_converter'):
         recordings.prepare(episode,destination,POLICY)
         if failure=='changed_source': (episode/'bag/small.mcap').write_bytes(b'changed')
+        elif failure=='old_converter':
+            zarr.open_group(str(next(destination.glob('*.zarr'))),mode='a').attrs['conversion_key']='old-converter'
         else:
             root=zarr.open_group(str(next(destination.glob('*.zarr'))),mode='a')
             root['action'][0]=np.nan
@@ -97,8 +99,11 @@ def test_fail_closed_and_atomic_outputs(source,tmp_path,monkeypatch,failure):
             Path(path).mkdir(); (Path(path)/'.zgroup').write_text('{}')
             raise ValueError('interrupted')
         monkeypatch.setattr(recordings,'convert',broken)
-    with pytest.raises(ValueError,match='bad'):
-        recordings.prepare(episode,destination,POLICY)
+    error=recordings.NoSuccessfulRecordings if failure in ('conversion','provenance') else ValueError
+    with pytest.raises(error):recordings.prepare(episode,destination,POLICY)
+    report=json.loads((destination/'conversion_report.json').read_text())
+    if failure in ('conversion','provenance'):
+        assert report['summary']['failed']==1 and report['recordings'][0]['status']=='FAILED'
     if failure in ('conversion','provenance'):
         assert not list(destination.glob('*.zarr')) and not (destination/'manifest.json').exists()
         assert not list(destination.glob('.conversion-*'))
@@ -129,7 +134,7 @@ def test_nonfinite_required_measurement_rejects(source,field):
 
 def test_progress_text(capsys):
     recordings.progress(7,24,'episode','validated')
-    assert '7/24 episode' in capsys.readouterr().out
+    assert '[07/24] CONVERTED' in capsys.readouterr().out
 
 
 def test_high_rate_reordered_controller_requires_latest_raw_identity(source):

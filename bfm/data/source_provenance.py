@@ -24,6 +24,10 @@ HANDS = np.r_[7:13, 20:26]
 HAND_TOPIC = '/robot/command/hand_target'
 
 
+class MissingProvenanceTrace(ValueError):
+    """Absent evidence only; contradictory or malformed evidence is never this error."""
+
+
 def boundaries(records):
     """Exactly the events that clear Synthetic's passive input buffers."""
     result = []; previous = None; boundary = None
@@ -92,7 +96,7 @@ class Provenance:
                          or any(hasattr(m, 'source_provenance_version') or hasattr(m, 'source_provenance_sha256')
                                 for _, m in records[ACTION]))
         self.mode = 'explicit_gateway_input_v1' if self.explicit else 'historical_bounded_value_chain_v1'
-        self.traces = {}; self.inputs = {}; self.selected = {}
+        self.traces = {}; self.inputs = {}; self.selected = {}; self.digest_keys = {}
         if declared and (not isinstance(declaration, dict)
                 or declaration.get('protocol') != PROTOCOL or type(declaration.get('version')) is not int
                 or declaration['version'] != 1 or declaration.get('topic') != TOPIC
@@ -155,6 +159,7 @@ class Provenance:
             self.traces[key][2].append(record)
         else:
             self.traces[key] = (text, data, [record])
+        self.digest_keys[hashlib.sha256(text.encode('utf-8')).hexdigest()] = key
 
     def explicit_match(self, record, msg, action, lower):
         version = getattr(msg, 'source_provenance_version', None)
@@ -165,7 +170,9 @@ class Provenance:
             raise ValueError('Invalid Action provenance SHA-256')
         key = (msg.producer_session_id, msg.action_id)
         if key not in self.traces:
-            raise ValueError('Missing referenced arm/hand trace for ' + str(key))
+            if digest in self.digest_keys:
+                raise ValueError('Action digest references a different provenance identity: ' + str(self.digest_keys[digest]))
+            raise MissingProvenanceTrace('Missing referenced arm/hand trace for ' + str(key))
         text, trace, times = self.traces[key]
         if hashlib.sha256(text.encode('utf-8')).hexdigest() != digest:
             raise ValueError('Action provenance digest mismatch')
@@ -229,14 +236,19 @@ class Provenance:
                     + [r-1 for r,_ in self.records[ACTION][index+1:index+2]])
         try:
             action = flatten_action(msg)
-            evidence = (self.explicit_match(record, msg, action, lower) if self.explicit
-                        else self.historical_match(record, action, lower, upper))
+            missing = False
+            try:
+                evidence = (self.explicit_match(record, msg, action, lower) if self.explicit
+                            else self.historical_match(record, action, lower, upper))
+            except MissingProvenanceTrace:
+                evidence = None; missing = True
             # These four recorder-causal times describe boundary controller/input
             # context, NOT the matching input identity or its callback time.
             context = [asof(self.records[t], record) for t in (RAW_ARM, HELD[0], HAND_TOPIC, HELD[1])]
             complete = all(p is not None and p[0] >= lower for p in context)
             association = dict(index=index,producer_session_id=msg.producer_session_id,action_id=msg.action_id,
                                record_ns=record,action_header_ns=header_ns(msg),mode=self.mode,boundary_record_ns=lower,evidence=evidence)
+            if missing:association['exclusion_reason']='missing_explicit_provenance_trace'
             return (np.array([p[0] for p in context], dtype=np.int64) if complete and evidence is not None else None), association
         except (ValueError, KeyError, TypeError, AttributeError, OverflowError) as exc:
             raise ValueError(f'episode={self.episode} action_index={index} action_id={msg.action_id} '

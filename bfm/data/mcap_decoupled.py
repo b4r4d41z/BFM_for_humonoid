@@ -11,6 +11,13 @@ from .sharpa import CAMERAS,SOURCES
 from .execution_v4 import identity
 
 
+class NoVerifiableTransitions(ValueError):
+    def __init__(self, total, rejected):
+        super().__init__('No verifiable decoupled transitions')
+        self.conversion_details = dict(total_actions=total,excluded_actions=len(rejected),exclusions=rejected,
+                                       valid_transitions=0,segments=0)
+
+
 def build(records,metadata,*,max_age_s,collection_commit,max_camera_skew_s=None):
     control=decoupled_control(metadata);bfm=metadata['bfm']
     if records.get('/bfm/execution_status'):raise ValueError('Executor evidence conflicts with decoupled recording architecture')
@@ -47,7 +54,8 @@ def build(records,metadata,*,max_age_s,collection_commit,max_camera_skew_s=None)
         watermarks[key[0]]=key[1]
         if key[0] not in sessions:sessions.append(key[0])
         stamp=header_ns(msg)
-        if stamp<0 or stamp not in clock_values:raise ValueError('Action stamp not witnessed by recorded /clock')
+        if stamp<0:raise ValueError('Invalid Action simulation timestamp')
+        if i and record<=actions[i-1][0]:raise ValueError('Duplicate/backward action record timestamp')
         boundary=i>0 and (events[i][0]!=events[i-1][0] or any(actions[i-1][0]<r<=record for r in resets))
         lower_bound=max((r for r in cutoffs if r<=record),default=-1)
         boundaries.append(boundary)
@@ -55,7 +63,8 @@ def build(records,metadata,*,max_age_s,collection_commit,max_camera_skew_s=None)
         if i and not boundary and key[0]!=actions[i-1][1].producer_session_id:raise ValueError('Competing passive sampler session')
         provenance,association=verifier.match(i,record,msg);associations.append(association)
         picked=[asof(records.get(topic,[]),record) for topic in TOPICS];reasons=[]
-        if provenance is None:reasons.append('incomplete_boundary_command_provenance')
+        if stamp not in clock_values:reasons.append('action_stamp_not_witnessed_by_clock')
+        if provenance is None:reasons.append(association.get('exclusion_reason','incomplete_boundary_command_provenance'))
         if events[i][1]:reasons.append(events[i][1])
         ages=np.array([record-p[0] if p else np.iinfo(np.int64).max for p in picked],dtype=np.int64)
         if any(p is None for p in picked):reasons.append('missing_observation')
@@ -66,7 +75,7 @@ def build(records,metadata,*,max_age_s,collection_commit,max_camera_skew_s=None)
             if camera_reason:reasons.append(camera_reason)
             if max_camera_skew_s is not None and np.ptp([p[0] for p in picked[2:]])>max_camera_skew_s*1e9:reasons.append('camera_skew')
         if reasons:
-            rejects.append(dict(index=i,record_ns=record,action_header_ns=stamp,reasons=reasons));ticks.append(None);continue
+            rejects.append(dict(index=i,record_ns=record,action_header_ns=stamp,producer_session_id=key[0],action_id=key[1],reasons=reasons));ticks.append(None);continue
         state,js,*images=[p[1] for p in picked]
         if state.header.frame_id!='world':raise ValueError('Expected world task state')
         if names is None:names=list(js.name)
@@ -94,7 +103,7 @@ def build(records,metadata,*,max_age_s,collection_commit,max_camera_skew_s=None)
         elif ticks[i] is None or ticks[i+1] is None:reason='invalid_endpoint'
         if reason:rejected_intervals.append(dict(index=i,reason=reason))
         else:pairs.append(i)
-    if not pairs:raise ValueError('No verifiable decoupled transitions')
+    if not pairs:raise NoVerifiableTransitions(len(actions),rejects)
     arrays={'action':np.stack([flatten_action(actions[i][1]) for i in pairs])}
     for prefix,shift in [('obs',0),('next_obs',1)]:
         for name in ticks[pairs[0]][0]:arrays[prefix+'/'+name]=np.stack([ticks[i+shift][0][name] for i in pairs])

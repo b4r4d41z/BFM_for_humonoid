@@ -45,8 +45,9 @@ def test_split_entrypoints_do_not_cross_layers(monkeypatch,tmp_path):
     monkeypatch.setattr(bfm.fb.trainer,'train',lambda *a,**k:pytest.fail('Conversion started training'))
     calls=[]
     monkeypatch.setattr(bfm.data.recordings,'prepare',lambda *a,**k:calls.append(a) or tmp_path/'manifest.json')
+    (tmp_path/'conversion_report.json').write_text(json.dumps({'summary':{'failed':0}}))
     monkeypatch.setattr(sys,'argv',['convert_recordings.py',str(tmp_path)])
-    module('convert_recordings').main();assert len(calls)==1
+    assert module('convert_recordings').main()==0;assert len(calls)==1
     monkeypatch.setattr(bfm.data.recordings,'prepare',lambda *a,**k:pytest.fail('Training called converter'))
     monkeypatch.setattr(sys,'argv',['train_from_zarr.py',str(tmp_path)])
     with pytest.raises(ValueError,match='Missing converted-data'):module('train_from_zarr').main()
